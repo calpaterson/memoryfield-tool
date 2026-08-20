@@ -110,20 +110,20 @@ def test_get_transport_unknown_errors(config_env):
         fields.get_transport(field)
 
 
-def test_field_summary_from_index(tmp_path, config_env):
+def test_field_title_from_index(tmp_path, config_env):
     d = tmp_path / "notes"
     d.mkdir()
     (d / "index.md").write_text(
-        "---\ntitle: Notes\nsummary: Notes about X\n---\n\n# Notes\n", encoding="utf-8"
+        "---\ntitle: My Notes\nsummary: Notes about X\n---\n\n# Notes\n", encoding="utf-8"
     )
     field = config.Field(name="notes", transport="local", location=str(d))
-    assert fields.field_summary(field) == "Notes about X"
+    assert fields.field_title(field) == "My Notes"
 
     (d / "index.md").unlink()
-    assert fields.field_summary(field) == ""
+    assert fields.field_title(field) == ""
 
-    (d / "index.md").write_text("---\ntitle: Notes\n---\n\n# Notes\n", encoding="utf-8")
-    assert fields.field_summary(field) == ""
+    (d / "index.md").write_text("---\nsummary: Only a summary\n---\n\n# Notes\n", encoding="utf-8")
+    assert fields.field_title(field) == ""
 
 
 def test_region_for_gcs_default(config_env):

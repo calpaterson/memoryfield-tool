@@ -256,10 +256,10 @@ def connect(
 @cli.command(name="fields")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
 def fields_cmd(as_json: bool) -> None:
-    """List connected memoryfields (name, transport, location, and index.md summary).
+    """List connected memoryfields (name, transport, location, and index.md title).
 
-    Reads each field's index.md for its self-describing summary; a missing or
-    unreadable index.md yields an empty summary.
+    Reads each field's index.md for its title frontmatter; a missing or
+    unreadable index.md yields an empty title.
 
     Examples:
 
@@ -275,7 +275,7 @@ def fields_cmd(as_json: bool) -> None:
             "name": f.name,
             "transport": f.transport,
             "location": f.location,
-            "summary": fields.field_summary(f),
+            "title": fields.field_title(f),
         }
         for f in field_list
     ]
@@ -287,12 +287,12 @@ def fields_cmd(as_json: bool) -> None:
         click.echo("No memoryfields connected.")
         return
 
-    out = ["| Field | Transport | Location | Summary |", "|---|---|---|---|"]
+    out = ["| Field | Transport | Location | Title |", "|---|---|---|---|"]
     for row in rows:
-        summary = str(row["summary"] or "—")
-        if len(summary) > 160:
-            summary = summary[:157] + "..."
-        out.append(f"| {row['name']} | {row['transport']} | {row['location']} | {summary} |")
+        title = str(row["title"] or "—")
+        if len(title) > 160:
+            title = title[:157] + "..."
+        out.append(f"| {row['name']} | {row['transport']} | {row['location']} | {title} |")
     click.echo("\n".join(out))
 
 

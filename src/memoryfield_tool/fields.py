@@ -16,8 +16,8 @@ def connected_fields(cfg: config.Config, field_name: str | None) -> list[config.
     return [cfg.fields[name] for name in sorted(cfg.fields)]
 
 
-def field_summary(field: config.Field) -> str:
-    """The summary frontmatter from the field's index.md, or ''."""
+def field_title(field: config.Field) -> str:
+    """The title frontmatter from the field's index.md, or ''."""
     t = get_transport(field)
     try:
         text = t.read_object("index.md").decode("utf-8", errors="ignore")
@@ -26,8 +26,8 @@ def field_summary(field: config.Field) -> str:
     fm, _ = frontmatter.parse_frontmatter(text)
     if fm is None:
         return ""
-    summary = fm.get("summary")
-    return str(summary) if summary is not None else ""
+    title = fm.get("title")
+    return str(title) if title is not None else ""
 
 
 def read_write_field(cfg: config.Config, field_name: str | None) -> config.Field:

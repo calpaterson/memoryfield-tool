@@ -143,15 +143,15 @@ def test_catalog_sort_created(cli_runner, connected):
 def test_fields_single(cli_runner, connected):
     _cfg_path, field_path = connected
     (field_path / "index.md").write_text(
-        "---\nsummary: Field notes\n---\n\n# Notes\n", encoding="utf-8"
+        "---\ntitle: My Notes\n---\n\n# Notes\n", encoding="utf-8"
     )
     result = cli_runner.invoke(cli.cli, ["fields"])
     assert result.exit_code == 0
-    assert "| Field | Transport | Location | Summary |" in result.output
+    assert "| Field | Transport | Location | Title |" in result.output
     assert "notes" in result.output
     assert "local" in result.output
     assert str(field_path) in result.output
-    assert "Field notes" in result.output
+    assert "My Notes" in result.output
 
 
 def test_fields_json(cli_runner, connected):
@@ -164,7 +164,7 @@ def test_fields_json(cli_runner, connected):
     assert row["name"] == "notes"
     assert "transport" in row
     assert "location" in row
-    assert "summary" in row
+    assert "title" in row
 
 
 def test_fields_no_fields(cli_runner, config_env):
