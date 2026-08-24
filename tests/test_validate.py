@@ -20,8 +20,12 @@ def test_subdir_page_error(field_dir):
     sub = field_dir / "subdir"
     sub.mkdir()
     (sub / "nested.md").write_text("nested\n", encoding="utf-8")
+    (sub / "conflict.sync-conflict-2026.md").write_text("nested\n", encoding="utf-8")
     issues = validate.validate_field(field_dir)
     assert any(i.level == "error" and i.filename == "subdir/nested.md" for i in issues)
+    assert any(
+        i.level == "error" and i.filename == "subdir/conflict.sync-conflict-2026.md" for i in issues
+    )
 
 
 def test_bad_filename_error(field_dir):
@@ -86,16 +90,22 @@ def test_asset_files_never_flagged(field_dir):
     assert all(i.filename not in ("photo.png", "video.mp4") for i in issues)
 
 
-def test_debris_never_flagged(field_dir):
+def test_non_md_files_not_pages(field_dir):
     (field_dir / ".DS_Store").write_text("junk", encoding="utf-8")
     (field_dir / "foo.md~").write_text("junk", encoding="utf-8")
-    (field_dir / "sync.sync-conflict-2026-08-24.md").write_text("junk", encoding="utf-8")
     (field_dir / "desktop.ini").write_text("junk", encoding="utf-8")
     (field_dir / "Thumbs.db").write_text("junk", encoding="utf-8")
     issues = validate.validate_field(field_dir)
     assert all(
-        i.filename not in (".DS_Store", "foo.md~", "sync.sync-conflict-2026-08-24.md")
-        for i in issues
+        i.filename not in (".DS_Store", "foo.md~", "desktop.ini", "Thumbs.db") for i in issues
+    )
+
+
+def test_sync_conflict_md_treated_as_page(field_dir):
+    (field_dir / "sync.sync-conflict-2026-08-24.md").write_text("junk", encoding="utf-8")
+    issues = validate.validate_field(field_dir)
+    assert any(
+        i.filename == "sync.sync-conflict-2026-08-24.md" and i.level == "error" for i in issues
     )
 
 

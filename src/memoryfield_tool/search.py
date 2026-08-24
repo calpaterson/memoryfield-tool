@@ -7,7 +7,7 @@ import sqlite_vec
 
 from . import config, embed, fields, frontmatter, index, pages
 
-SEARCH_DISTANCE = 0.7
+RESULT_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -50,25 +50,21 @@ def _vector_search(root: Path, query: str) -> list[SearchResult] | None:
     try:
         cur = db.execute(
             "SELECT filename, vec_distance_cosine(embedding, ?) AS distance "
-            "FROM pages ORDER BY distance LIMIT 20",
+            f"FROM pages ORDER BY distance LIMIT {RESULT_LIMIT}",
             (qblob,),
         )
         rows = cur.fetchall()
     finally:
         db.close()
 
-    results: list[SearchResult] = []
-    for filename, distance in rows:
-        if distance >= SEARCH_DISTANCE:
-            continue
-        results.append(
-            SearchResult(
-                filename=filename,
-                summary=_summary_from_index(idx, filename),
-                distance=float(distance),
-            )
+    return [
+        SearchResult(
+            filename=filename,
+            summary=_summary_from_index(idx, filename),
+            distance=float(distance),
         )
-    return results
+        for filename, distance in rows
+    ]
 
 
 def _summary_from_index(idx: Path, filename: str) -> str:
@@ -93,7 +89,7 @@ def _substring_search(root: Path, query: str) -> list[SearchResult]:
         summary = str(fm_dict.get("summary", ""))
         if needle in f.name.lower() or needle in title.lower() or needle in summary.lower():
             results.append(SearchResult(filename=f.name, summary=summary, distance=None))
-    return results
+    return results[:RESULT_LIMIT]
 
 
 def search_field(root: Path, query: str) -> list[SearchResult]:

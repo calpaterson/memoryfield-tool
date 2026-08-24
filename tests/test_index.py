@@ -5,7 +5,7 @@ from memoryfield_tool import index
 
 def test_full_build(field_dir, fake_embed):
     indexed, removed, embed_ok = index.build_index(field_dir, progress=False)
-    assert indexed == 3
+    assert indexed == 4
     assert removed == 0
     assert embed_ok is True
 
@@ -16,7 +16,7 @@ def test_full_build(field_dir, fake_embed):
     db = index._open_index(db_path)
     rows = db.execute("SELECT filename FROM pages ORDER BY filename").fetchall()
     db.close()
-    assert [r[0] for r in rows] == ["alpha.md", "beta.md", "gamma.md"]
+    assert [r[0] for r in rows] == ["alpha.md", "beta.md", "gamma.md", "index.md"]
 
 
 def test_frontmatter_column_stores_json(field_dir, fake_embed):
@@ -63,7 +63,7 @@ def test_add_modify_delete(field_dir, fake_embed):
     db = index._open_index(index.index_path(field_dir))
     names = {r[0] for r in db.execute("SELECT filename FROM pages")}
     db.close()
-    assert names == {"alpha.md", "beta.md", "delta.md"}
+    assert names == {"alpha.md", "beta.md", "delta.md", "index.md"}
 
 
 def test_embedding_input_includes_frontmatter(field_dir, fake_embed, monkeypatch):
@@ -116,7 +116,7 @@ def test_unquoted_datetime_frontmatter_tolerated(field_dir, fake_embed):
         encoding="utf-8",
     )
     indexed, removed, embed_ok = index.build_index(field_dir, progress=False)
-    assert indexed == 4
+    assert indexed == 5
     assert removed == 0
     assert embed_ok is True
 

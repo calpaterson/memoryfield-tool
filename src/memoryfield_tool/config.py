@@ -16,8 +16,6 @@ class Field:
     name: str
     transport: str
     location: str
-    created: str
-    last_used: str
 
 
 @dataclass(frozen=True)
@@ -56,8 +54,6 @@ def load_config() -> Config:
                 name=name,
                 transport=str(raw.get("transport", "local")),
                 location=str(raw.get("location", "")),
-                created=str(raw.get("created", "")),
-                last_used=str(raw.get("last_used", "")),
             )
     return Config(fields=fields, path=path)
 
@@ -69,8 +65,6 @@ def save_config(cfg: Config) -> None:
         memoryfields[name] = {
             "transport": field.transport,
             "location": field.location,
-            "created": field.created,
-            "last_used": field.last_used,
         }
     payload: dict[str, object] = {"memoryfields": memoryfields}
 
@@ -85,13 +79,7 @@ def add_field(cfg: Config, name: str, location: str) -> Field:
         raise click.ClickException(f"invalid memoryfield name {name!r}")
     if name in cfg.fields:
         raise click.ClickException(f"memoryfield {name!r} already connected")
-    return Field(
-        name=name,
-        transport="local",
-        location=location,
-        created=now_iso(),
-        last_used=now_iso(),
-    )
+    return Field(name=name, transport="local", location=location)
 
 
 def get_field(cfg: Config, name: str) -> Field:
@@ -104,13 +92,6 @@ def get_field(cfg: Config, name: str) -> Field:
 def remove_field(cfg: Config, name: str) -> Config:
     fields = dict(cfg.fields)
     fields.pop(name, None)
-    return replace(cfg, fields=fields)
-
-
-def touch_last_used(cfg: Config, name: str) -> Config:
-    field = get_field(cfg, name)
-    fields = dict(cfg.fields)
-    fields[name] = replace(field, last_used=now_iso())
     return replace(cfg, fields=fields)
 
 

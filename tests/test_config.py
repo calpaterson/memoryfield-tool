@@ -29,7 +29,7 @@ def test_empty_config_roundtrip(config_env):
     assert config_env.is_file()
 
 
-def test_add_get_touch_remove(config_env):
+def test_add_get_remove(config_env):
     cfg = config.load_config()
     field = config.add_field(cfg, "notes", "/tmp/notes")
     assert field.name == "notes"
@@ -42,11 +42,19 @@ def test_add_get_touch_remove(config_env):
     reloaded = config.load_config()
     assert config.get_field(reloaded, "notes") == field
 
-    touched = config.touch_last_used(reloaded, "notes")
-    assert touched.fields["notes"].last_used >= field.last_used
-
-    removed = config.remove_field(touched, "notes")
+    removed = config.remove_field(reloaded, "notes")
     assert "notes" not in removed.fields
+
+
+def test_saved_config_has_no_metadata(config_env):
+    cfg = config.load_config()
+    field = config.add_field(cfg, "notes", "/tmp/notes")
+    config.save_config(config.with_field(cfg, field))
+    text = config_env.read_text(encoding="utf-8")
+    assert "transport" in text
+    assert "location" in text
+    assert "last_used" not in text
+    assert "created" not in text
 
 
 def test_duplicate_name_error(config_env):
@@ -89,9 +97,22 @@ def test_atomic_write_reload_after_add(config_env):
     reloaded = config.load_config()
     assert config.get_field(reloaded, "notes") == field
 
-    config.save_config(config.touch_last_used(reloaded, "notes"))
-    again = config.load_config()
-    assert config.get_field(again, "notes").last_used != ""
+
+def test_legacy_metadata_keys_ignored(config_env):
+    config_env.write_text(
+        "[memoryfields.notes]\n"
+        'transport = "local"\n'
+        'location = "/tmp/notes"\n'
+        'created = "2026-01-01T00:00:00Z"\n'
+        'last_used = "2026-01-01T00:00:00Z"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    field = config.get_field(cfg, "notes")
+    assert field.transport == "local"
+    assert field.location == "/tmp/notes"
+    assert not hasattr(field, "created")
+    assert not hasattr(field, "last_used")
 
 
 def test_unknown_top_level_key_ignored(config_env):
@@ -99,9 +120,7 @@ def test_unknown_top_level_key_ignored(config_env):
         'future = "some unknown key"\n'
         "[memoryfields.notes]\n"
         'transport = "local"\n'
-        'location = "/tmp/notes"\n'
-        'created = "2026-01-01T00:00:00Z"\n'
-        'last_used = "2026-01-01T00:00:00Z"\n',
+        'location = "/tmp/notes"\n',
         encoding="utf-8",
     )
     cfg = config.load_config()

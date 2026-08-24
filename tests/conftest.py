@@ -86,11 +86,7 @@ def field_dir(tmp_path):
 @pytest.fixture
 def connected(config_env, field_dir):
     config_env.write_text(
-        f"[memoryfields.notes]\n"
-        f'transport = "local"\n'
-        f'location = "{field_dir}"\n'
-        f'created = "2026-01-01T00:00:00Z"\n'
-        f'last_used = "2026-01-01T00:00:00Z"\n',
+        f'[memoryfields.notes]\ntransport = "local"\nlocation = "{field_dir}"\n',
         encoding="utf-8",
     )
     return config_env, field_dir

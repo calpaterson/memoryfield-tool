@@ -66,8 +66,6 @@ def test_require_local_rejects_other(config_env):
         name="remote",
         transport="http",
         location="https://example.com",
-        created="",
-        last_used="",
     )
     with pytest.raises(click.ClickException, match="only local"):
         fields.require_local(field)

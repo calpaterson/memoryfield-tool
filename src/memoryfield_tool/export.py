@@ -15,7 +15,5 @@ def export_field(field: config.Field, out_path: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for f in pages.collect_all_files(root):
-            if f.name.endswith(".lock"):
-                continue
             zf.write(f, f.relative_to(root))
     return out

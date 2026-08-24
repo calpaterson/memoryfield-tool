@@ -13,6 +13,7 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
     try:
         embeddings = ollama.embed(model=OLLAMA_MODEL, input=texts, truncate=True)["embeddings"]
         return list(embeddings)
-    except Exception:
+    except Exception as e:
+        print(f"embedding failed: {e}")
         _EMBED_FAILED = True
         return None

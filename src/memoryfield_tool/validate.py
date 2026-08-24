@@ -65,7 +65,7 @@ def validate_field(root: Path) -> list[Issue]:
         issues.append(Issue("error", "", "field contains no pages"))
 
     for f in root.rglob("*.md"):
-        if f.is_file() and f.parent != root and not pages.is_debris(f.name):
+        if f.is_file() and f.parent != root:
             issues.append(Issue("error", str(f.relative_to(root)), "page inside a subdirectory"))
 
     for f in page_files:

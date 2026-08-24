@@ -10,7 +10,7 @@ def test_create_makes_field(cli_runner, config_env):
     assert result.exit_code == 0
     assert loc.is_dir()
     assert (loc / "index.md").is_file()
-    assert (loc / "getting-started.md").is_file()
+    assert not (loc / "getting-started.md").exists()
     cfg = config.load_config()
     assert "demo" in cfg.fields
     assert "Created memoryfield" in result.output
@@ -290,12 +290,13 @@ def test_write_uuid_preserved(cli_runner, connected, monkeypatch):
     assert frontmatter.get_frontmatter_field(new_text, "uuid") == old_uuid
 
 
-def test_write_touches_last_used(cli_runner, connected, monkeypatch):
+def test_write_touches_no_config(cli_runner, connected, monkeypatch):
     _cfg_path, _field_path = connected
     monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    config_before = config.load_config()
     cli_runner.invoke(cli.cli, ["write", "new.md"], input="content\n")
-    cfg = config.load_config()
-    assert cfg.fields["notes"].last_used > "2026-01-01T00:00:00Z"
+    config_after = config.load_config()
+    assert config_after == config_before
 
 
 def test_write_spawns_exactly_once(cli_runner, connected, monkeypatch):
@@ -311,7 +312,7 @@ def test_index_builds(cli_runner, connected, fake_embed):
     result = cli_runner.invoke(cli.cli, ["index", "--field", "notes"])
     assert result.exit_code == 0
     assert (field_path / "nomic-embed-text-v1.5.sqlite3").is_file()
-    assert "indexed 3 files" in result.output
+    assert "indexed 4 files" in result.output
 
 
 def test_index_up_to_date(cli_runner, connected, fake_embed):

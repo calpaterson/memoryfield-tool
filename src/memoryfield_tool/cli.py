@@ -1,7 +1,7 @@
 import json
 import sys
 from pathlib import Path
-from uuid import uuid4
+from uuid import uuid6
 
 import click
 
@@ -29,7 +29,7 @@ def _resolve_field_location(field_name: str, location: str | None) -> Path:
     help="Directory to create the field in (default ~/memoryfields/<name>)",
 )
 def create(name: str, location: str | None) -> None:
-    """Create a new memoryfield with a starter page."""
+    """Create a new memoryfield with an introductory index page."""
     dest = _resolve_field_location(name, location)
     if dest.exists():
         raise click.ClickException(f"directory already exists: {dest}")
@@ -41,38 +41,25 @@ def create(name: str, location: str | None) -> None:
     now = config.now_iso()
     index_fm: dict[str, object] = {
         "title": name,
-        "uuid": str(uuid4()),
+        "uuid": str(uuid6()),
         "created": now,
         "updated": now,
+        "summary": "Introduction and getting-started notes for this memoryfield.",
     }
     (dest / "index.md").write_text(
         frontmatter.build_frontmatter(index_fm)
-        + f"\n# {name}\n\nWelcome to your memoryfield. Pages live next to this file.\n",
-        encoding="utf-8",
-    )
-
-    start_fm: dict[str, object] = {
-        "title": "Getting Started",
-        "uuid": str(uuid4()),
-        "created": now,
-        "updated": now,
-        "summary": "Notes on getting started with this memoryfield.",
-    }
-    (dest / "getting-started.md").write_text(
-        frontmatter.build_frontmatter(start_fm)
-        + "\n# Getting Started\n\n"
+        + f"\n# {name}\n\n"
+        + "Welcome to your memoryfield. Pages live next to this file.\n\n"
         + "Read and write pages with the `read` and `write` commands, build the "
         + "vector index with `index`, and search it with `search`.\n",
         encoding="utf-8",
     )
 
     cfg = config.with_field(cfg, field)
-    cfg = config.touch_last_used(cfg, name)
     config.save_config(cfg)
 
     click.echo(f"Created memoryfield {name!r} at {dest}")
     click.echo(f"  {dest / 'index.md'}")
-    click.echo(f"  {dest / 'getting-started.md'}")
 
 
 @cli.command()
@@ -87,7 +74,6 @@ def connect(name: str, location: str) -> None:
     cfg = config.load_config()
     field = config.add_field(cfg, name, str(dest))
     cfg = config.with_field(cfg, field)
-    cfg = config.touch_last_used(cfg, name)
     config.save_config(cfg)
 
     if not pages.collect_pages(dest):
@@ -157,9 +143,6 @@ def catalog(field_name: str | None, sort_by: str, as_json: bool) -> None:
     """List all pages across connected memoryfields with frontmatter metadata."""
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
-    for field in field_list:
-        cfg = config.touch_last_used(cfg, field.name)
-    config.save_config(cfg)
 
     rows = _catalog_rows(cfg, field_list)
     _sort_rows(rows, sort_by)
@@ -233,8 +216,6 @@ def read_cmd(
     cfg = config.load_config()
     field = fields.read_write_field(cfg, field_name)
     fields.require_local(field)
-    cfg = config.touch_last_used(cfg, field.name)
-    config.save_config(cfg)
 
     line_numbers = not no_line_numbers
     effective_limit = sys.maxsize if no_limit else limit
@@ -314,8 +295,6 @@ def write(page: str, field_name: str | None, force: bool, append: bool, dry_run:
     with dest.open(mode) as f:
         f.write(raw if append else body.encode("utf-8"))
 
-    cfg = config.touch_last_used(cfg, field.name)
-    config.save_config(cfg)
     reindex.spawn_background_index(field.name)
     click.echo(f"Wrote {len(raw)} bytes to {field.name}/{page}", err=True)
 
@@ -327,7 +306,6 @@ def index_cmd(field_name: str | None) -> None:
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
-        cfg = config.touch_last_used(cfg, field.name)
         try:
             fields.require_local(field)
             root = fields.field_root(field)
@@ -346,7 +324,13 @@ def index_cmd(field_name: str | None) -> None:
             click.echo(f"{field.name}: {', '.join(parts)}")
         else:
             click.echo(f"{field.name}: all files up to date")
-    config.save_config(cfg)
+
+
+def _format_result(result: search.SearchResult) -> str:
+    line = f"{result.filename}: {result.summary}" if result.summary else result.filename
+    if result.distance is not None:
+        line = f"{line} (distance {result.distance:.3f})"
+    return line
 
 
 @cli.command(name="search")
@@ -357,9 +341,6 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
     """Search pages across connected memoryfields."""
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
-    for field in field_list:
-        cfg = config.touch_last_used(cfg, field.name)
-    config.save_config(cfg)
 
     results = search.search_all(field_list, query)
     if as_json:
@@ -380,11 +361,11 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
         return
     if len(field_list) == 1:
         for _fname, r in results:
-            click.echo(f"{r.filename}: {r.summary}" if r.summary else r.filename)
+            click.echo(_format_result(r))
     else:
         for fname, r in results:
-            line = f"{fname}/{r.filename}"
-            click.echo(f"{line}: {r.summary}" if r.summary else line)
+            line = f"{fname}/{_format_result(r)}"
+            click.echo(line)
 
 
 @cli.command(name="validate")
@@ -395,7 +376,6 @@ def validate_cmd(field_name: str | None) -> None:
     field_list = fields.connected_fields(cfg, field_name)
     any_error = False
     for field in field_list:
-        cfg = config.touch_last_used(cfg, field.name)
         root = fields.field_root(field)
         issues = validate.validate_field(root)
         errors = [i for i in issues if i.level == "error"]
@@ -406,7 +386,6 @@ def validate_cmd(field_name: str | None) -> None:
         click.echo(f"{field.name}: {len(errors)} errors, {len(warnings)} warnings")
         if errors:
             any_error = True
-    config.save_config(cfg)
     if any_error:
         sys.exit(1)
 
@@ -421,7 +400,6 @@ def export_cmd(field_name: str | None, output: str | None) -> None:
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
-        cfg = config.touch_last_used(cfg, field.name)
         try:
             fields.require_local(field)
             out = Path(output).expanduser() if output else Path(f"./{field.name}.memoryfield.zip")
@@ -430,7 +408,6 @@ def export_cmd(field_name: str | None, output: str | None) -> None:
             click.echo(f"error: {e.message}", err=True)
             continue
         click.echo(f"Wrote {field.name} to {result}")
-    config.save_config(cfg)
 
 
 def main() -> None:

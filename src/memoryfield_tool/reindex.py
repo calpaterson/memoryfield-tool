@@ -10,6 +10,12 @@ LOG_PATH = _LOG_DIR / "reindex.log"
 
 
 def spawn_background_index(name: str) -> None:
+    # NOTE: the background-reindex path is not well tested yet.  It is covered
+    # by a single ollama-gated integration test (tests/test_reindex.py) and is
+    # best-effort: failures are logged to LOG_PATH and swallowed, and concurrent
+    # runs are serialised only by the flock in index.build_index on a single
+    # machine.  Re-run `memoryfield-tool index --field <name>` to force a
+    # rebuild if the index looks stale.
     cfg = config.load_config()
     field = config.get_field(cfg, name)
     root = fields.field_root(field)

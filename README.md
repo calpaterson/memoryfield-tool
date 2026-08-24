@@ -27,7 +27,7 @@ works without it (search falls back to substring matching).
 ## Commands
 
 ```
-create NAME [--location PATH]     Create a new memoryfield (with a starter page)
+create NAME [--location PATH]     Create a new memoryfield (intro index page)
 connect NAME LOCATION             Connect an existing directory as a memoryfield
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
 validate [--field NAME]           Check a field against the spec
@@ -47,19 +47,17 @@ The config file lives at `~/.config/memoryfield-tool.toml` (override with
 [memoryfields.notes]
 transport = "local"
 location = "/home/me/memoryfields/notes"
-created = "2026-01-01T00:00:00Z"
-last_used = "2026-01-01T00:00:00Z"
 ```
 
-`create` and `connect` add entries; every command that touches a field updates
-`last_used`.
+`create` and `connect` add entries.
 
 ## Vector index
 
 Indexing writes `<field>/nomic-embed-text-v1.5.sqlite3` inside the field using
 the spec's `pages` schema.  Indexes are derived data and can be regenerated
-with `index` at any time.  After each `write`, the index is rebuilt in the
-background (a detached process; its stderr goes to
+with `index` at any time.  `search` returns the top 20 nearest pages (cosine
+distance shown in the output; no hard distance cutoff).  After each `write`,
+the index is rebuilt in the background (a detached process; its stderr goes to
 `~/.cache/memoryfield-tool/reindex.log`).
 
 ## What's next
