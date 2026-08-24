@@ -144,7 +144,7 @@ def test_global_search_tags_and_orders(app, connected, tmp_path, fake_embed):
     idx.build_index(transport.local(field2), idx.index_path(field2), progress=False)
 
     app2 = web.create_app(config.load_config())
-    resp = app2.test_client().get("/search?p=work")
+    resp = app2.test_client().get("/search?q=work")
     assert resp.status_code == 200
     data = json.loads(resp.data)
     results = data["results"]
@@ -154,7 +154,7 @@ def test_global_search_tags_and_orders(app, connected, tmp_path, fake_embed):
     assert distances == sorted(distances, reverse=True)
 
 
-def test_global_search_missing_p_400(app):
+def test_global_search_missing_q_400(app):
     assert app.test_client().get("/search").status_code == 400
 
 

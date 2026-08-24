@@ -97,8 +97,8 @@ renderer.  Field names from the config namespace the routes:
 | `/{field}/{page}`      | GET    | Rendered page HTML                             |
 | `/{field}/{page}.md`   | GET    | Raw page bytes (`text/markdown`)               |
 | `/{field}.memoryfield.zip` | GET | Full field snapshot as a zip                |
-| `/{field}/search?p=`   | GET    | Field-scoped search JSON (`results` array)     |
-| `/search?p=`           | GET    | Global search across all fields (results gain `field`) |
+| `/{field}/search?q=`   | GET    | Field-scoped search JSON (`results` array)     |
+| `/search?q=`           | GET    | Global search across all fields (results gain `field`) |
 | `/{field}/{page}.md`   | PUT    | Create (201) or replace (204) a page           |
 | `/{field}/{page}.md`   | DELETE | Remove a page and its index entries (204)      |
 

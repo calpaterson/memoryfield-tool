@@ -178,11 +178,11 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
     @app.route("/<field>/search")
     def field_search(field: str) -> Response:
         f = _field_or_404(field)
-        p = request.args.get("p")
-        if not p:
+        q = request.args.get("q")
+        if not q:
             return Response(status=400)
         t = transports[f.name]
-        results = search.search_field(t, index_locs[f.name], p)
+        results = search.search_field(t, index_locs[f.name], q)
         payload = [
             {
                 "filename": r.filename,
@@ -195,10 +195,10 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
 
     @app.route("/search")
     def global_search() -> Response:
-        p = request.args.get("p")
-        if not p:
+        q = request.args.get("q")
+        if not q:
             return Response(status=400)
-        results = search.search_all(field_list, p)
+        results = search.search_all(field_list, q)
         results.sort(key=lambda t: t[1].distance if t[1].distance is not None else float("inf"))
         payload = [
             {

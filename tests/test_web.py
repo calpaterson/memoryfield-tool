@@ -157,7 +157,7 @@ def test_field_search_shape(app, connected, fake_embed):
     from memoryfield_tool import index
 
     index.build_index(transport.local(field_path), index.index_path(field_path), progress=False)
-    resp = _get(app.test_client(), "/notes/search?p=beta")
+    resp = _get(app.test_client(), "/notes/search?q=beta")
     assert resp.status_code == 200
     data = json.loads(resp.data)
     assert set(data.keys()) == {"results"}
@@ -172,19 +172,19 @@ def test_field_search_shape(app, connected, fake_embed):
 
 
 def test_field_search_empty_results(app, connected):
-    resp = _get(app.test_client(), "/notes/search?p=zzzz-not-there")
+    resp = _get(app.test_client(), "/notes/search?q=zzzz-not-there")
     assert resp.status_code == 200
     data = json.loads(resp.data)
     assert data == {"results": []}
 
 
-def test_field_search_missing_p_400(app):
+def test_field_search_missing_q_400(app):
     assert _get(app.test_client(), "/notes/search").status_code == 400
 
 
 def test_field_search_substring_fallback(app, connected):
     _cfg_path, _field_path = connected
-    resp = _get(app.test_client(), "/notes/search?p=beta")
+    resp = _get(app.test_client(), "/notes/search?q=beta")
     assert resp.status_code == 200
     data = json.loads(resp.data)
     results = data["results"]
@@ -227,7 +227,7 @@ def test_s3_field_serving(config_env):
     assert "index.md" in names
     assert "alpha.md" in names
 
-    resp = _get(client, "/notes/search?p=alpha")
+    resp = _get(client, "/notes/search?q=alpha")
     assert resp.status_code == 200
     data = json.loads(resp.data)
     assert set(data.keys()) == {"results"}
