@@ -1,0 +1,48 @@
+[project]
+name = "memoryfield-tool"
+version = "0.1.0"
+description = "CLI tool for reading, writing and exporting memoryfields"
+requires-python = ">=3.14"
+dependencies = [
+    "click~=8.3.0",
+    "ollama~=0.6",
+    "pysqlite3-binary~=0.5",
+    "pyyaml~=6.0.3",
+    "sqlite-vec~=0.1.9",
+    "tomli-w~=1.0",
+    "tqdm~=4.67",
+]
+
+[project.scripts]
+memoryfield-tool = "memoryfield_tool.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/memoryfield_tool"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.14"
+files = ["src"]
+strict = true
+ignore_missing_imports = true
