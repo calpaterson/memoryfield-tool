@@ -115,3 +115,17 @@ def test_external_links_not_flagged(field_dir):
     (field_dir / "ext.md").write_text(f"---\ntitle: Ext\n---\n\n{body}", encoding="utf-8")
     issues = validate.validate_field(field_dir)
     assert all("broken link" not in i.message for i in issues)
+
+
+def test_unquoted_datetime_error(field_dir):
+    (field_dir / "unquoted.md").write_text(
+        "---\ntitle: U\ncreated: 2026-03-01\nupdated: 2026-03-02 14:30:00\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    issues = validate.validate_field(field_dir)
+    created = [i for i in issues if i.filename == "unquoted.md" and "created" in i.message]
+    updated = [i for i in issues if i.filename == "unquoted.md" and "updated" in i.message]
+    assert len(created) == 1
+    assert created[0].level == "error"
+    assert len(updated) == 1
+    assert updated[0].level == "error"

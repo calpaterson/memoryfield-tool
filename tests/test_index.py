@@ -108,3 +108,22 @@ def test_noop_rebuild_returns_ok(field_dir, fake_embed):
     indexed, removed, embed_ok = index.build_index(field_dir, progress=False)
     assert (indexed, removed) == (0, 0)
     assert embed_ok is True
+
+
+def test_unquoted_datetime_frontmatter_tolerated(field_dir, fake_embed):
+    (field_dir / "datepage.md").write_text(
+        "---\ntitle: Date Page\ncreated: 2026-03-01\nupdated: 2026-03-02 14:30:00\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    indexed, removed, embed_ok = index.build_index(field_dir, progress=False)
+    assert indexed == 4
+    assert removed == 0
+    assert embed_ok is True
+
+    db = index._open_index(index.index_path(field_dir))
+    (fm,) = db.execute("SELECT frontmatter FROM pages WHERE filename = 'datepage.md'").fetchone()
+    db.close()
+    parsed = json.loads(fm)
+    assert parsed["created"] == "2026-03-01"
+    assert isinstance(parsed["created"], str)
+    assert parsed["updated"] == "2026-03-02 14:30:00"

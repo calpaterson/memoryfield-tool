@@ -97,7 +97,7 @@ def build_index(root: Path, progress: bool = True) -> tuple[int, int, bool]:
             ):
                 raw = (root / filename).read_bytes()
                 fm, _has = frontmatter.parse_frontmatter(raw.decode("utf-8", errors="ignore"))
-                frontmatter_json = json.dumps(fm)
+                frontmatter_json = json.dumps(fm, default=str)
 
                 result = embed.embed_texts([_embed_input(raw)])
                 if result is None:
@@ -128,7 +128,7 @@ def reindex_page(root: Path, filename: str) -> None:
         path = root / filename
         raw = path.read_bytes()
         fm, _has = frontmatter.parse_frontmatter(raw.decode("utf-8", errors="ignore"))
-        frontmatter_json = json.dumps(fm)
+        frontmatter_json = json.dumps(fm, default=str)
 
         result = embed.embed_texts([_embed_input(raw)])
         if result is None:

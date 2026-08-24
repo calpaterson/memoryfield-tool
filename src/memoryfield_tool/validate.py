@@ -1,6 +1,8 @@
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import date as _date_type
+from datetime import datetime as _datetime_type
 from pathlib import Path
 
 from . import embed, frontmatter, pages
@@ -102,6 +104,17 @@ def validate_field(root: Path) -> list[Issue]:
                         f"missing recommended frontmatter field(s): {', '.join(missing)}",
                     )
                 )
+            for field in ("created", "updated"):
+                value = fm.get(field)
+                if isinstance(value, (_date_type, _datetime_type)):
+                    issues.append(
+                        Issue(
+                            "error",
+                            f.name,
+                            f"frontmatter {field!r} must be a quoted string "
+                            f"(unquoted value parsed as {type(value).__name__})",
+                        )
+                    )
 
         summary = (fm or {}).get("summary")
         if isinstance(summary, str) and len(summary) > 160:
