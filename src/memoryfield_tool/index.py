@@ -3,7 +3,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 import pysqlite3 as sqlite3
@@ -11,6 +11,7 @@ import sqlite_vec
 from tqdm import tqdm
 
 from . import embed, frontmatter, pages
+from .transport import Transport
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pages (
@@ -32,8 +33,8 @@ def index_path(root: Path) -> Path:
 
 
 @contextmanager
-def _with_lock(root: Path) -> Iterator[None]:
-    lock_path = index_path(root).with_suffix(".sqlite3.lock")
+def _with_lock(index_loc: Path) -> Iterator[None]:
+    lock_path = index_loc.with_suffix(".sqlite3.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fd = lock_path.open("w")
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
@@ -53,8 +54,8 @@ def _open_index(path: Path) -> sqlite3.Connection:
     return db
 
 
-def _mtime_iso(mtime: float) -> str:
-    return datetime.fromtimestamp(mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _dt_iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _embed_input(content: bytes) -> str:
@@ -62,14 +63,14 @@ def _embed_input(content: bytes) -> str:
     return f"search_document: {truncated}"
 
 
-def build_index(root: Path, progress: bool = True) -> tuple[int, int, bool]:
-    with _with_lock(root):
-        db = _open_index(index_path(root))
+def build_index(t: Transport, index_loc: Path, progress: bool = True) -> tuple[int, int, bool]:
+    with _with_lock(index_loc):
+        db = _open_index(index_loc)
 
         disk: dict[str, tuple[str, bytes]] = {}
-        for f in pages.collect_pages(root):
-            raw = f.read_bytes()
-            disk[f.name] = (_mtime_iso(f.stat().st_mtime), hashlib.sha256(raw).digest())
+        for info in pages.page_infos(t):
+            raw = t.read_object(info.key)
+            disk[info.key] = (_dt_iso(info.last_modified), hashlib.sha256(raw).digest())
 
         cur = db.execute("SELECT filename, sha256_hash FROM pages")
         indexed: dict[str, bytes] = {row[0]: row[1] for row in cur.fetchall()}
@@ -95,7 +96,7 @@ def build_index(root: Path, progress: bool = True) -> tuple[int, int, bool]:
                 total=len(disk),
                 disable=not progress,
             ):
-                raw = (root / filename).read_bytes()
+                raw = t.read_object(filename)
                 fm, _has = frontmatter.parse_frontmatter(raw.decode("utf-8", errors="ignore"))
                 frontmatter_json = json.dumps(fm, default=str)
 
@@ -122,11 +123,25 @@ def build_index(root: Path, progress: bool = True) -> tuple[int, int, bool]:
         return indexed_count, removed, True
 
 
-def reindex_page(root: Path, filename: str) -> None:
-    with _with_lock(root):
-        db = _open_index(index_path(root))
-        path = root / filename
-        raw = path.read_bytes()
+def delete_page(index_loc: Path, filename: str) -> None:
+    """Remove a page's row from the vector index. No-op when the index is absent."""
+    if not index_loc.is_file():
+        return
+    with _with_lock(index_loc):
+        db = _open_index(index_loc)
+        db.execute("DELETE FROM pages WHERE filename = ?", (filename,))
+        db.commit()
+        db.close()
+
+
+def reindex_page(t: Transport, index_loc: Path, filename: str) -> None:
+    with _with_lock(index_loc):
+        db = _open_index(index_loc)
+        info = t.stat_object(filename)
+        if info is None:
+            db.close()
+            return
+        raw = t.read_object(filename)
         fm, _has = frontmatter.parse_frontmatter(raw.decode("utf-8", errors="ignore"))
         frontmatter_json = json.dumps(fm, default=str)
 
@@ -136,7 +151,7 @@ def reindex_page(root: Path, filename: str) -> None:
             return
         [embedding] = result
         embedding_blob = sqlite_vec.serialize_float32(embedding)
-        mtime_iso = _mtime_iso(path.stat().st_mtime)
+        mtime_iso = _dt_iso(info.last_modified)
         sha = hashlib.sha256(raw).digest()
 
         db.execute(

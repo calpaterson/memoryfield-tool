@@ -1,16 +1,23 @@
-from memoryfield_tool import config, index, search
+from memoryfield_tool import config, index, search, transport
 
 
 def test_vector_ranking_exact_match(field_dir, fake_embed, monkeypatch):
     alpha_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
     alpha_vec = fake_embed([f"search_document: {alpha_text}"])[0]
-    index.build_index(field_dir, progress=False)
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
 
     monkeypatch.setattr("memoryfield_tool.search.embed.embed_texts", lambda texts: [alpha_vec])
-    results = search.search_field(field_dir, "alpha")
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "alpha")
     assert results[0].filename == "alpha.md"
     assert results[0].distance == 0.0
     assert results[0].summary == "Notes about alpha things."
+    assert results[0].frontmatter == {
+        "title": "Alpha Notes",
+        "summary": "Notes about alpha things.",
+        "created": "2026-01-01T09:00:00Z",
+        "updated": "2026-01-02T09:00:00Z",
+        "uuid": results[0].frontmatter["uuid"],
+    }
 
 
 def test_vector_no_threshold_returns_ranked(field_dir, monkeypatch):
@@ -27,9 +34,11 @@ def test_vector_no_threshold_returns_ranked(field_dir, monkeypatch):
         return out
 
     monkeypatch.setattr("memoryfield_tool.embed.embed_texts", controlled)
-    index.build_index(field_dir, progress=False)
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
 
-    results = search.search_field(field_dir, "some query")
+    results = search.search_field(
+        transport.local(field_dir), index.index_path(field_dir), "some query"
+    )
     filenames = [r.filename for r in results]
     assert filenames[0] == "alpha.md"
     assert "beta.md" in filenames
@@ -44,28 +53,52 @@ def test_vector_results_limited_to_20(field_dir, fake_embed):
         (field_dir / f"page-{i:02d}.md").write_text(
             f"---\ntitle: Page {i}\n---\n\nbody {i}\n", encoding="utf-8"
         )
-    index.build_index(field_dir, progress=False)
-    results = search.search_field(field_dir, "anything")
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+    results = search.search_field(
+        transport.local(field_dir), index.index_path(field_dir), "anything"
+    )
     assert len(results) == 20
 
 
+def test_vector_result_without_frontmatter(field_dir, fake_embed):
+    (field_dir / "plain.md").write_text("# Just a heading\n", encoding="utf-8")
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "plain")
+    plain = next(r for r in results if r.filename == "plain.md")
+    assert plain.frontmatter is None
+
+
 def test_substring_fallback_no_index(field_dir):
-    results = search.search_field(field_dir, "beta")
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "beta")
     assert [r.filename for r in results] == ["beta.md"]
     assert results[0].summary == "Notes about beta things."
     assert results[0].distance is None
+    assert results[0].frontmatter == {
+        "title": "Beta Notes",
+        "summary": "Notes about beta things.",
+        "created": "2026-01-01T09:00:00Z",
+        "updated": "2026-01-02T09:00:00Z",
+        "uuid": results[0].frontmatter["uuid"],
+    }
+
+
+def test_substring_fallback_page_without_frontmatter(field_dir):
+    (field_dir / "plain.md").write_text("# Just a heading\n", encoding="utf-8")
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "plain")
+    assert [r.filename for r in results] == ["plain.md"]
+    assert results[0].frontmatter is None
 
 
 def test_substring_fallback_when_embed_none(field_dir, fake_embed, monkeypatch):
-    index.build_index(field_dir, progress=False)
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
     monkeypatch.setattr("memoryfield_tool.embed.embed_texts", lambda texts: None)
-    results = search.search_field(field_dir, "gamma")
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "gamma")
     assert [r.filename for r in results] == ["gamma.md"]
     assert all(r.distance is None for r in results)
 
 
 def test_substring_fallback_case_insensitive(field_dir):
-    results = search.search_field(field_dir, "GAMMA")
+    results = search.search_field(transport.local(field_dir), index.index_path(field_dir), "GAMMA")
     assert [r.filename for r in results] == ["gamma.md"]
 
 

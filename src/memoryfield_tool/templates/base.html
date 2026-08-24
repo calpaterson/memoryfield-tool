@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if field %}{{ field }} · {% endif %}{{ title }}</title>
+  <link rel="stylesheet"
+        href="{{ pico_css }}">
+  <style>
+    :root {
+      --pico-font-size: 95%;
+    }
+    @media (min-width: 576px) { :root { --pico-font-size: 95%; } }
+    @media (min-width: 768px) { :root { --pico-font-size: 95%; } }
+    @media (min-width: 1024px) { :root { --pico-font-size: 95%; } }
+    @media (min-width: 1280px) { :root { --pico-font-size: 95%; } }
+    @media (min-width: 1536px) { :root { --pico-font-size: 95%; } }
+
+    main.container {
+      max-width: 45rem;
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <nav>
+      <ul>
+        <li><a href="/"><strong>Memoryfields</strong></a></li>
+      </ul>
+      <ul>
+        {% for name in nav_fields %}
+        <li><a href="/{{ name }}/">{{ name }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    {% if fm %}
+      <hgroup>
+        <h1>{{ fm.title }}</h1>
+        <p>{{ fm.summary }}</p>
+      </hgroup>
+      <p><small>Created {{ fm.created }} &middot; Updated {{ fm.updated }}</small></p>
+    {% endif %}
+    {{ content|safe }}
+  </main>
+</body>
+</html>

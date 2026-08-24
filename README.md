@@ -28,7 +28,8 @@ works without it (search falls back to substring matching).
 
 ```
 create NAME [--location PATH]     Create a new memoryfield (intro index page)
-connect NAME LOCATION             Connect an existing directory as a memoryfield
+connect NAME LOCATION             Connect an existing directory (or s3:// URI)
+                                  as a memoryfield
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
 validate [--field NAME]           Check a field against the spec
 read [--field NAME] PAGES...      Print pages with line numbers
@@ -36,7 +37,84 @@ write [--field NAME] PAGE         Write stdin to a page (background reindex)
 index [--field NAME]              Build or update the vector index
 search [--field NAME] QUERY       Semantic search (substring fallback)
 export [--field NAME]             Write the field as a .memoryfield.zip
+serve [--port N] [--host H]       Serve all fields over HTTP (spec data
+      [--allow-writes] [--open]     server + HTML renderer)
 ```
+
+## S3-compatible stores
+
+Fields may live on any S3-compatible object store (AWS S3, Google Cloud
+Storage's S3-compatible XML API, MinIO, Cloudflare R2) by connecting a
+`s3://bucket/prefix` location:
+
+```sh
+memoryfield-tool connect cadentia s3://cadentia-bucket/cadentia \
+  --endpoint-url https://storage.googleapis.com --region auto
+memoryfield-tool create cadentia --location s3://cadentia-bucket/cadentia \
+  --endpoint-url https://storage.googleapis.com
+```
+
+- **AWS** uses the default endpoint, so `--endpoint-url` is optional; credentials
+  come from the standard `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and
+  `AWS_REGION`) environment variables.
+- **GCS** exposes an S3-compatible API at
+  `https://storage.googleapis.com`; create HMAC keys in the GCS console and set
+  them in the same `AWS_` environment variables, then pass
+  `--endpoint-url https://storage.googleapis.com`.  The `region` defaults to
+  `"auto"` automatically for the GCS endpoint (boto3 needs it for signature
+  generation); pass `--region` to override.
+- The `endpoint_url` and `region` choices are persisted per-field in the config
+  and can be overridden at any time.
+- `connect` probes the bucket at startup (fail-fast on bad credentials); `serve`
+  probes every connected bucket before serving.
+- Every command (`read`, `write`, `catalog`, `validate`, `index`, `search`,
+  `export`) and the HTTP routes work identically for local and s3 fields.
+- `write --append` on s3 is a read-modify-write (S3 has no native append), so
+  concurrent appends can lose data; prefer `write --force` (PUT) for anything
+  contended.
+
+## Serving over HTTP (`serve`)
+
+`serve` runs a Flask app (via waitress) for every connected memoryfield,
+exposing both the spec's writable data-server endpoints and an awiki-style HTML
+renderer.  Field names from the config namespace the routes:
+
+| Route                  | Method | Description                                    |
+|------------------------|--------|------------------------------------------------|
+| `/`                    | GET    | Landing page listing every field               |
+| `/{field}/`            | GET    | Rendered `index.md`, or a catalog listing      |
+| `/{field}/{page}`      | GET    | Rendered page HTML                             |
+| `/{field}/{page}.md`   | GET    | Raw page bytes (`text/markdown`)               |
+| `/{field}.memoryfield.zip` | GET | Full field snapshot as a zip                |
+| `/{field}/search?p=`   | GET    | Field-scoped search JSON (`results` array)     |
+| `/search?p=`           | GET    | Global search across all fields (results gain `field`) |
+| `/{field}/{page}.md`   | PUT    | Create (201) or replace (204) a page           |
+| `/{field}/{page}.md`   | DELETE | Remove a page and its index entries (204)      |
+
+Flags:
+
+- `--port N` — default `6211`.
+- `--host H` — default `127.0.0.1`.
+- `--allow-writes` — enable `PUT`/`DELETE`.  No authentication is implemented,
+  so writes are refused unless the host is loopback (`127.0.0.1`, `localhost`,
+  `::1`); `--allow-writes` with any other host refuses to start.
+- `--open` — open the landing page in a browser.
+
+Notes:
+
+- The config is snapshotted at startup — connect a new field and restart to
+  serve it.  `serve` never touches `last_used` (the config stays CLI-owned).
+- s3 pages are read live with no caching in v1 (ETag/Last-Modified caching is
+  future work).  Buckets are probed at startup, so an unreachable bucket refuses
+  to start `serve` rather than 500ing per request.
+- A page literally named `search` is shadowed for HTML rendering (the search
+  route wins); it is still available raw at `/{field}/search.md`.  Field names
+  `search` and `static` are likewise reserved.
+- The renderer bundles pico.css at build time (sha256-pinned, never checked
+  into git); in a source checkout it falls back to the pinned CDN URL.
+- `PUT` reindexes the page synchronously; `DELETE` drops its index rows.  As in
+  the CLI, an unavailable embedding model degrades silently to substring
+  search.
 
 ## Configuration
 
@@ -47,19 +125,25 @@ The config file lives at `~/.config/memoryfield-tool.toml` (override with
 [memoryfields.notes]
 transport = "local"
 location = "/home/me/memoryfields/notes"
+
+[memoryfields.cadentia]
+transport = "s3"
+location = "s3://cadentia-bucket/cadentia"
+endpoint_url = "https://storage.googleapis.com"
+region = "auto"
 ```
 
-`create` and `connect` add entries.
+`create` and `connect` add entries; `endpoint_url` and `region` are emitted only
+when set (legacy configs stay byte-compatible).
 
 ## Vector index
 
-Indexing writes `<field>/nomic-embed-text-v1.5.sqlite3` inside the field using
-the spec's `pages` schema.  Indexes are derived data and can be regenerated
-with `index` at any time.  `search` returns the top 20 nearest pages (cosine
+Local fields index to `<field>/nomic-embed-text-v1.5.sqlite3` inside the field;
+s3 fields index to `~/.cache/memoryfield-tool/indexes/<field>.sqlite3` on the
+local machine.  Both use the spec's `pages` schema.  Indexes are derived data
+and can be regenerated with `index` at any time — the cache-dir index is
+machine-local, so it is not shared across machines (run `index` on each one) and
+is not included in exports.  `search` returns the top 20 nearest pages (cosine
 distance shown in the output; no hard distance cutoff).  After each `write`,
 the index is rebuilt in the background (a detached process; its stderr goes to
 `~/.cache/memoryfield-tool/reindex.log`).
-
-## What's next
-
-A `serve` command (spec data server + HTML rendering) is planned.

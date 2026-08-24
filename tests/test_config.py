@@ -125,3 +125,44 @@ def test_unknown_top_level_key_ignored(config_env):
     )
     cfg = config.load_config()
     assert "notes" in cfg.fields
+
+
+def test_s3_field_endpoint_region_roundtrip(config_env):
+    cfg = config.load_config()
+    field = config.add_field(
+        cfg,
+        "cadentia",
+        "s3://cadentia-bucket/cadentia",
+        transport="s3",
+        endpoint_url="https://storage.googleapis.com",
+        region="auto",
+    )
+    cfg = config.with_field(cfg, field)
+    config.save_config(cfg)
+
+    reloaded = config.load_config()
+    loaded = config.get_field(reloaded, "cadentia")
+    assert loaded == field
+    assert loaded.transport == "s3"
+    assert loaded.endpoint_url == "https://storage.googleapis.com"
+    assert loaded.region == "auto"
+
+
+def test_legacy_config_without_new_keys_loads_none(config_env):
+    config_env.write_text(
+        '[memoryfields.notes]\ntransport = "local"\nlocation = "/tmp/notes"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    field = config.get_field(cfg, "notes")
+    assert field.endpoint_url is None
+    assert field.region is None
+
+
+def test_endpoint_url_not_emitted_when_none(config_env):
+    cfg = config.load_config()
+    field = config.add_field(cfg, "notes", "/tmp/notes")
+    config.save_config(config.with_field(cfg, field))
+    text = config_env.read_text(encoding="utf-8")
+    assert "endpoint_url" not in text
+    assert "region" not in text

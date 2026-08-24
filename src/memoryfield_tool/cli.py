@@ -1,13 +1,18 @@
 import json
 import sys
+import webbrowser
 from pathlib import Path
 from uuid import uuid6
 
 import click
+from waitress import serve as waitress_serve
 
-from . import config, export, fields, frontmatter, index, pages, reindex, search, validate
+from . import catalog as catalog_mod
+from . import config, export, fields, frontmatter, index, reindex, search, transport, validate, web
+from . import pages as pages_mod
 
 _SORT_CHOICES = ["path", "title", "created", "updated"]
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
 @click.group()
@@ -26,17 +31,12 @@ def _resolve_field_location(field_name: str, location: str | None) -> Path:
 @click.option(
     "--location",
     default=None,
-    help="Directory to create the field in (default ~/memoryfields/<name>)",
+    help="Directory (or s3://bucket/prefix) to create the field in (default ~/memoryfields/<name>)",
 )
-def create(name: str, location: str | None) -> None:
+@click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
+def create(name: str, location: str | None, endpoint_url: str | None) -> None:
     """Create a new memoryfield with an introductory index page."""
-    dest = _resolve_field_location(name, location)
-    if dest.exists():
-        raise click.ClickException(f"directory already exists: {dest}")
-
     cfg = config.load_config()
-    field = config.add_field(cfg, name, str(dest.resolve()))
-    dest.mkdir(parents=True)
 
     now = config.now_iso()
     index_fm: dict[str, object] = {
@@ -46,14 +46,41 @@ def create(name: str, location: str | None) -> None:
         "updated": now,
         "summary": "Introduction and getting-started notes for this memoryfield.",
     }
-    (dest / "index.md").write_text(
+    index_body = (
         frontmatter.build_frontmatter(index_fm)
         + f"\n# {name}\n\n"
         + "Welcome to your memoryfield. Pages live next to this file.\n\n"
         + "Read and write pages with the `read` and `write` commands, build the "
-        + "vector index with `index`, and search it with `search`.\n",
-        encoding="utf-8",
+        + "vector index with `index`, and search it with `search`.\n"
     )
+
+    if location and location.startswith("s3://"):
+        transport.parse_s3_uri(location)
+        field = config.add_field(cfg, name, location, transport="s3", endpoint_url=endpoint_url)
+        t = fields.get_transport(field)
+        try:
+            t.probe()
+        except transport.TransportError as e:
+            raise click.ClickException(f"memoryfield {name!r}: {e}") from None
+        if t.exists("index.md"):
+            raise click.ClickException(
+                f"bucket already contains {name} (remove it or pick another name)"
+            )
+        t.write_object("index.md", index_body.encode("utf-8"))
+        cfg = config.with_field(cfg, field)
+        config.save_config(cfg)
+        click.echo(f"Created memoryfield {name!r} at {location}")
+        click.echo(f"  {location}/index.md")
+        return
+
+    dest = _resolve_field_location(name, location)
+    if dest.exists():
+        raise click.ClickException(f"directory already exists: {dest}")
+
+    field = config.add_field(cfg, name, str(dest.resolve()))
+    dest.mkdir(parents=True)
+
+    (dest / "index.md").write_text(index_body, encoding="utf-8")
 
     cfg = config.with_field(cfg, field)
     config.save_config(cfg)
@@ -65,52 +92,40 @@ def create(name: str, location: str | None) -> None:
 @cli.command()
 @click.argument("name")
 @click.argument("location")
-def connect(name: str, location: str) -> None:
-    """Connect an existing directory as a memoryfield."""
+@click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
+@click.option("--region", default=None, help="Region for the S3 endpoint (s3 fields)")
+def connect(name: str, location: str, endpoint_url: str | None, region: str | None) -> None:
+    """Connect an existing directory (or s3://bucket/prefix) as a memoryfield."""
+    cfg = config.load_config()
+    if location.startswith("s3://"):
+        transport.parse_s3_uri(location)
+        field = config.add_field(
+            cfg, name, location, transport="s3", endpoint_url=endpoint_url, region=region
+        )
+        t = fields.get_transport(field)
+        try:
+            t.probe()
+        except transport.TransportError as e:
+            raise click.ClickException(f"memoryfield {name!r}: {e}") from None
+        cfg = config.with_field(cfg, field)
+        config.save_config(cfg)
+
+        if not pages_mod.collect_pages(t):
+            click.echo(f"warning: {location} contains no pages (will fail validation)", err=True)
+        click.echo(f"Connected memoryfield {name!r} at {location}")
+        return
+
     dest = Path(location).expanduser().resolve()
     if not dest.is_dir():
         raise click.ClickException(f"not a directory: {dest}")
 
-    cfg = config.load_config()
     field = config.add_field(cfg, name, str(dest))
     cfg = config.with_field(cfg, field)
     config.save_config(cfg)
 
-    if not pages.collect_pages(dest):
+    if not pages_mod.collect_pages(transport.local(dest)):
         click.echo(f"warning: {dest} contains no pages (will fail validation)", err=True)
     click.echo(f"Connected memoryfield {name!r} at {dest}")
-
-
-def _catalog_rows(cfg: config.Config, field_list: list[config.Field]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for field in field_list:
-        root = fields.field_root(field)
-        for p in pages.collect_pages(root):
-            text = p.read_text("utf-8")
-            fm, _has = frontmatter.parse_frontmatter(text)
-            fm_dict = fm if fm is not None else {}
-            rows.append(
-                {
-                    "field": field.name,
-                    "filename": p.name,
-                    "title": str(fm_dict.get("title", "")),
-                    "summary": str(fm_dict.get("summary", "")),
-                    "created": fm_dict.get("created", ""),
-                    "updated": fm_dict.get("updated", ""),
-                }
-            )
-    return rows
-
-
-def _sort_rows(rows: list[dict[str, object]], sort_by: str) -> None:
-    if sort_by == "path":
-        rows.sort(key=lambda r: (str(r["field"]), str(r["filename"])))
-    elif sort_by == "title":
-        rows.sort(key=lambda r: str(r["title"]).lower())
-    elif sort_by == "created":
-        rows.sort(key=lambda r: str(r["created"]), reverse=True)
-    elif sort_by == "updated":
-        rows.sort(key=lambda r: str(r["updated"]), reverse=True)
 
 
 def _catalog_markdown(rows: list[dict[str, object]], multi_field: bool) -> str:
@@ -144,8 +159,11 @@ def catalog(field_name: str | None, sort_by: str, as_json: bool) -> None:
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
 
-    rows = _catalog_rows(cfg, field_list)
-    _sort_rows(rows, sort_by)
+    rows: list[dict[str, object]] = []
+    for field in field_list:
+        t = fields.get_transport(field)
+        rows.extend(catalog_mod.catalog_field(t, field_name=field.name))
+    rows = catalog_mod.catalog_sort(rows, sort_by)
 
     if as_json:
         click.echo(json.dumps(rows, indent=2, default=str))
@@ -155,32 +173,17 @@ def catalog(field_name: str | None, sort_by: str, as_json: bool) -> None:
         click.echo("No pages found.")
         return
 
-    click.echo(_catalog_markdown(rows, multi_field=len(field_list) > 1))
+    click.echo(catalog_mod.catalog_markdown(rows, show_field=len(field_list) > 1))
 
 
 def _read_file(
-    path: Path,
+    text: str,
     display_path: str,
     offset: int,
     limit: int,
     show_line_numbers: bool,
     file_label: str | None = None,
 ) -> list[str] | None:
-    try:
-        text = path.read_text("utf-8")
-    except UnicodeDecodeError:
-        click.echo(f"error: {display_path}: cannot read binary file", err=True)
-        return None
-    except FileNotFoundError:
-        click.echo(f"error: {display_path}: file not found", err=True)
-        return None
-    except IsADirectoryError:
-        click.echo(f"error: {display_path}: is a directory, not a file", err=True)
-        return None
-    except PermissionError:
-        click.echo(f"error: {display_path}: permission denied", err=True)
-        return None
-
     lines = text.splitlines()
     selected = lines[offset - 1 : offset - 1 + limit]
 
@@ -215,21 +218,34 @@ def read_cmd(
     """Read one or more pages from a memoryfield."""
     cfg = config.load_config()
     field = fields.read_write_field(cfg, field_name)
-    fields.require_local(field)
+    t = fields.get_transport(field)
 
     line_numbers = not no_line_numbers
     effective_limit = sys.maxsize if no_limit else limit
     failed = False
     for page in pages:
+        if not pages_mod.is_page_filename(page):
+            click.echo(f"error: {page}: page name is invalid or escapes the field root", err=True)
+            failed = True
+            continue
         try:
-            resolved = fields.resolve_page(field, page)
-        except click.ClickException as e:
-            click.echo(f"error: {page}: {e.message}", err=True)
+            raw = t.read_object(page)
+            text = raw.decode("utf-8")
+        except transport.ObjectNotFound:
+            click.echo(f"error: {page}: file not found", err=True)
+            failed = True
+            continue
+        except UnicodeDecodeError:
+            click.echo(f"error: {page}: cannot read binary file", err=True)
+            failed = True
+            continue
+        except PermissionError:
+            click.echo(f"error: {page}: permission denied", err=True)
             failed = True
             continue
 
         output = _read_file(
-            path=resolved,
+            text=text,
             display_path=page,
             offset=offset,
             limit=effective_limit,
@@ -254,9 +270,9 @@ def read_cmd(
 @click.option("--dry-run", is_flag=True, help="Print content to stdout instead of writing")
 def write(page: str, field_name: str | None, force: bool, append: bool, dry_run: bool) -> None:
     """Write stdin to a page in a memoryfield."""
-    if not pages.is_page_filename(page):
+    if not pages_mod.is_page_filename(page):
         raise click.ClickException(
-            f"invalid page filename {page!r} (must match {pages.PAGE_FILENAME_RE.pattern})"
+            f"invalid page filename {page!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
         )
     raw = sys.stdin.buffer.read()
     try:
@@ -272,31 +288,15 @@ def write(page: str, field_name: str | None, force: bool, append: bool, dry_run:
 
     cfg = config.load_config()
     field = fields.read_write_field(cfg, field_name)
-    fields.require_local(field)
-    dest = fields.resolve_page(field, page)
+    t = fields.get_transport(field)
 
-    if dest.exists() and not force and not append:
-        raise click.ClickException(
-            f"file exists: {page} (use --force to overwrite or --append to append)"
-        )
-
-    if dest.exists() and not append:
-        old_text = dest.read_text("utf-8", errors="replace")
-        old_uuid = frontmatter.get_frontmatter_field(old_text, "uuid")
-        new_uuid = frontmatter.get_frontmatter_field(body, "uuid")
-        if old_uuid is not None and new_uuid is not None and old_uuid != new_uuid:
-            raise click.ClickException(
-                f"uuid conflict on {page}: body uuid {new_uuid!r} differs from stored {old_uuid!r}"
-            )
-        if old_uuid is not None and new_uuid is None:
-            body = frontmatter.set_frontmatter_field(body, "uuid", old_uuid)
-
-    mode = "ab" if append else "wb"
-    with dest.open(mode) as f:
-        f.write(raw if append else body.encode("utf-8"))
+    try:
+        result = pages_mod.write_page(t, page, raw, force=force, append=append)
+    except pages_mod.PageWriteError as e:
+        raise click.ClickException(str(e)) from None
 
     reindex.spawn_background_index(field.name)
-    click.echo(f"Wrote {len(raw)} bytes to {field.name}/{page}", err=True)
+    click.echo(f"Wrote {result.bytes_written} bytes to {field.name}/{page}", err=True)
 
 
 @cli.command(name="index")
@@ -307,9 +307,9 @@ def index_cmd(field_name: str | None) -> None:
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
         try:
-            fields.require_local(field)
-            root = fields.field_root(field)
-            indexed, removed, embed_ok = index.build_index(root)
+            t = fields.get_transport(field)
+            loc = fields.index_location(field)
+            indexed, removed, embed_ok = index.build_index(t, loc)
         except click.ClickException as e:
             click.echo(f"error: {e.message}", err=True)
             continue
@@ -376,8 +376,8 @@ def validate_cmd(field_name: str | None) -> None:
     field_list = fields.connected_fields(cfg, field_name)
     any_error = False
     for field in field_list:
-        root = fields.field_root(field)
-        issues = validate.validate_field(root)
+        t = fields.get_transport(field)
+        issues = validate.validate_field(t)
         errors = [i for i in issues if i.level == "error"]
         warnings = [i for i in issues if i.level == "warning"]
         for issue in issues:
@@ -401,13 +401,45 @@ def export_cmd(field_name: str | None, output: str | None) -> None:
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
         try:
-            fields.require_local(field)
             out = Path(output).expanduser() if output else Path(f"./{field.name}.memoryfield.zip")
-            result = export.export_field(field, out)
+            export.export_field(field, out)
         except click.ClickException as e:
             click.echo(f"error: {e.message}", err=True)
             continue
-        click.echo(f"Wrote {field.name} to {result}")
+        click.echo(f"Wrote {field.name} to {out}", err=True)
+
+
+@cli.command()
+@click.option("--port", default=6211, type=int, help="Port to bind to (default 6211)")
+@click.option("--host", default="127.0.0.1", help="Host to bind to (default 127.0.0.1)")
+@click.option(
+    "--allow-writes",
+    is_flag=True,
+    help="Enable PUT/DELETE (loopback hosts only; no auth is implemented)",
+)
+@click.option("--open", "open_browser", is_flag=True, help="Open the landing page in a browser")
+def serve(port: int, host: str, allow_writes: bool, open_browser: bool) -> None:
+    """Serve connected memoryfields over HTTP (spec data server + HTML)."""
+    if allow_writes and host not in _LOOPBACK_HOSTS:
+        raise click.ClickException(
+            f"refusing to enable --allow-writes on non-loopback host {host!r} "
+            "(no auth is implemented)"
+        )
+    cfg = config.load_config()
+    field_list = fields.connected_fields(cfg, None)
+    if not field_list:
+        raise click.ClickException("no memoryfields connected (run connect)")
+    for field in field_list:
+        try:
+            fields.get_transport(field).probe()
+        except transport.TransportError as e:
+            raise click.ClickException(f"memoryfield {field.name!r}: {e}") from None
+
+    app = web.create_app(cfg, allow_writes=allow_writes)
+    click.echo(f"Serving {len(field_list)} memoryfield(s) at http://{host}:{port}", err=True)
+    if open_browser:
+        webbrowser.open(f"http://{host}:{port}")
+    waitress_serve(app, host=host, port=port)
 
 
 def main() -> None:

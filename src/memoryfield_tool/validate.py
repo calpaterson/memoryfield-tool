@@ -6,6 +6,7 @@ from datetime import datetime as _datetime_type
 from pathlib import Path
 
 from . import embed, frontmatter, pages
+from .transport import Transport
 
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
 MDLINK_RE = re.compile(r"\[([^\]]*)\]\(([^)]*)\)")
@@ -30,17 +31,14 @@ def _skip_code(line: str) -> str:
     return re.sub(r"`[^`]*`", "", line)
 
 
-def _resolve_link(url: str, page: Path, root: Path) -> Path | None:
+def _link_exists(t: Transport, url: str) -> bool:
     path_part = url.split("#")[0]
     if path_part == "":
-        return None
-    candidates = [root / path_part, page.parent / path_part]
+        return True
+    candidates = [path_part]
     if not Path(path_part).suffix:
-        candidates.extend([root / (path_part + ".md"), page.parent / (path_part + ".md")])
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
+        candidates.append(path_part + ".md")
+    return any(t.exists(candidate) for candidate in candidates)
 
 
 def _iter_mdlinks(text: str) -> Iterator[re.Match[str]]:
@@ -57,40 +55,42 @@ def _iter_mdlinks(text: str) -> Iterator[re.Match[str]]:
         yield from MDLINK_RE.finditer(cleaned)
 
 
-def validate_field(root: Path) -> list[Issue]:
+def validate_field(t: Transport) -> list[Issue]:
     issues: list[Issue] = []
-    page_files = pages.collect_pages(root)
+    flat = {o.key: o for o in t.list_objects()}
+    page_keys = pages.collect_pages(t)
 
-    if not page_files:
+    if not page_keys:
         issues.append(Issue("error", "", "field contains no pages"))
 
-    for f in root.rglob("*.md"):
-        if f.is_file() and f.parent != root:
-            issues.append(Issue("error", str(f.relative_to(root)), "page inside a subdirectory"))
+    for o in t.list_objects(recursive=True):
+        if "/" in o.key and o.key.endswith(".md"):
+            issues.append(Issue("error", o.key, "page inside a subdirectory"))
 
-    for f in page_files:
-        if not pages.is_page_filename(f.name):
+    for key in page_keys:
+        if not pages.is_page_filename(key):
             issues.append(
                 Issue(
                     "error",
-                    f.name,
-                    f"filename {f.name!r} must match {pages.PAGE_FILENAME_RE.pattern}",
+                    key,
+                    f"filename {key!r} must match {pages.PAGE_FILENAME_RE.pattern}",
                 )
             )
 
-    for f in page_files:
+    for key in page_keys:
         try:
-            text = f.read_text("utf-8")
+            text = t.read_object(key).decode("utf-8")
         except UnicodeDecodeError:
-            issues.append(Issue("error", f.name, "not valid UTF-8"))
+            issues.append(Issue("error", key, "not valid UTF-8"))
             continue
 
         fm, has = frontmatter.parse_frontmatter(text)
         if has and fm is None:
-            issues.append(Issue("error", f.name, "frontmatter YAML failed to parse"))
+            issues.append(Issue("error", key, "frontmatter YAML failed to parse"))
 
-        if f.stat().st_size > 8192:
-            issues.append(Issue("warning", f.name, "page exceeds 8192 bytes"))
+        info = flat.get(key)
+        if info is not None and info.size > 8192:
+            issues.append(Issue("warning", key, "page exceeds 8192 bytes"))
 
         if fm is not None:
             missing = [
@@ -100,7 +100,7 @@ def validate_field(root: Path) -> list[Issue]:
                 issues.append(
                     Issue(
                         "warning",
-                        f.name,
+                        key,
                         f"missing recommended frontmatter field(s): {', '.join(missing)}",
                     )
                 )
@@ -110,7 +110,7 @@ def validate_field(root: Path) -> list[Issue]:
                     issues.append(
                         Issue(
                             "error",
-                            f.name,
+                            key,
                             f"frontmatter {field!r} must be a quoted string "
                             f"(unquoted value parsed as {type(value).__name__})",
                         )
@@ -121,7 +121,7 @@ def validate_field(root: Path) -> list[Issue]:
             issues.append(
                 Issue(
                     "warning",
-                    f.name,
+                    key,
                     f"summary too long ({len(summary)} chars, max 160)",
                 )
             )
@@ -130,16 +130,16 @@ def validate_field(root: Path) -> list[Issue]:
             url = m.group(2)
             if _is_external_link(url):
                 continue
-            if _resolve_link(url, f, root) is None:
-                issues.append(Issue("warning", f.name, f"broken link: {url}"))
+            if not _link_exists(t, url):
+                issues.append(Issue("warning", key, f"broken link: {url}"))
 
-    for f in root.iterdir():
-        if f.is_file() and f.suffix == ".sqlite3":
-            if not f.name.startswith(embed.MODEL_CODE):
+    for key in flat:
+        if key.endswith(".sqlite3"):
+            if not key.startswith(embed.MODEL_CODE):
                 issues.append(
                     Issue(
                         "error",
-                        f.name,
+                        key,
                         f"vector index filename must begin with {embed.MODEL_CODE}",
                     )
                 )

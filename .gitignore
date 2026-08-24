@@ -5,3 +5,4 @@ dist/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+src/memoryfield_tool/static/

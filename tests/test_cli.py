@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
-from memoryfield_tool import cli, config, frontmatter
+import boto3
+from moto import mock_aws
+
+from memoryfield_tool import cli, config, frontmatter, transport
 
 
 def test_create_makes_field(cli_runner, config_env):
@@ -404,3 +407,134 @@ def test_export_default_name_in_cwd(cli_runner, connected):
         result = cli_runner.invoke(cli.cli, ["export", "--field", "notes"])
         assert result.exit_code == 0
         assert Path("notes.memoryfield.zip").is_file()
+
+
+def test_serve_prints_and_calls_waitress(cli_runner, connected, monkeypatch):
+    _cfg_path, _field_path = connected
+    calls = {}
+    monkeypatch.setattr(
+        "memoryfield_tool.cli.waitress_serve",
+        lambda app, host, port: calls.update(host=host, port=port),
+    )
+    result = cli_runner.invoke(cli.cli, ["serve"])
+    assert result.exit_code == 0
+    assert "Serving 1 memoryfield(s) at http://127.0.0.1:6211" in result.output
+    assert calls == {"host": "127.0.0.1", "port": 6211}
+
+
+def test_serve_custom_port_host(cli_runner, connected, monkeypatch):
+    _cfg_path, _field_path = connected
+    calls = {}
+    monkeypatch.setattr(
+        "memoryfield_tool.cli.waitress_serve",
+        lambda app, host, port: calls.update(host=host, port=port),
+    )
+    result = cli_runner.invoke(cli.cli, ["serve", "--port", "7000", "--host", "localhost"])
+    assert result.exit_code == 0
+    assert calls == {"host": "localhost", "port": 7000}
+
+
+def test_serve_allow_writes_non_loopback_refuses(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["serve", "--allow-writes", "--host", "0.0.0.0"])
+    assert result.exit_code == 1
+    assert "non-loopback" in result.output
+
+
+def test_serve_open_calls_webbrowser(cli_runner, connected, monkeypatch):
+    _cfg_path, _field_path = connected
+    opened = []
+    monkeypatch.setattr("memoryfield_tool.cli.webbrowser.open", opened.append)
+    monkeypatch.setattr("memoryfield_tool.cli.waitress_serve", lambda app, host, port: None)
+    result = cli_runner.invoke(cli.cli, ["serve", "--open"])
+    assert result.exit_code == 0
+    assert opened == ["http://127.0.0.1:6211"]
+
+
+def test_serve_no_fields_errors(cli_runner, config_env):
+    result = cli_runner.invoke(cli.cli, ["serve"])
+    assert result.exit_code == 1
+    assert "no memoryfields connected" in result.output
+
+
+@mock_aws
+def test_connect_s3_registers(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# hi\n")
+    result = cli_runner.invoke(cli.cli, ["connect", "cadentia", "s3://cadentia-bucket/cadentia"])
+    assert result.exit_code == 0
+    assert "Connected memoryfield" in result.output
+    field = config.load_config().fields["cadentia"]
+    assert field.transport == "s3"
+    assert field.location == "s3://cadentia-bucket/cadentia"
+
+
+@mock_aws
+def test_connect_s3_no_scheme_errors(cli_runner, config_env):
+    result = cli_runner.invoke(cli.cli, ["connect", "cadentia", "cadentia-bucket/cadentia"])
+    assert result.exit_code == 1
+    assert "not a directory" in result.output
+
+
+@mock_aws
+def test_connect_s3_malformed_uri_errors(cli_runner, config_env):
+    result = cli_runner.invoke(cli.cli, ["connect", "cadentia", "s3://UPPER/prefix"])
+    assert result.exit_code == 1
+    assert "invalid s3 location" in result.output
+
+
+@mock_aws
+def test_connect_s3_unreachable_bucket_errors(cli_runner, config_env):
+    result = cli_runner.invoke(cli.cli, ["connect", "cadentia", "s3://no-such-bucket-xyz/cadentia"])
+    assert result.exit_code == 1
+    assert "cadentia" in result.output
+
+
+@mock_aws
+def test_connect_s3_endpoint_url_persists(cli_runner, config_env, monkeypatch):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# hi\n")
+    monkeypatch.setattr(transport.S3Transport, "probe", lambda self: None)
+    monkeypatch.setattr(transport.S3Transport, "list_objects", lambda self, *, recursive=False: [])
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "connect",
+            "cadentia",
+            "s3://cadentia-bucket/cadentia",
+            "--endpoint-url",
+            "https://storage.googleapis.com",
+        ],
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["cadentia"]
+    assert field.endpoint_url == "https://storage.googleapis.com"
+
+
+@mock_aws
+def test_create_s3(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    result = cli_runner.invoke(
+        cli.cli, ["create", "cadentia", "--location", "s3://cadentia-bucket/cadentia"]
+    )
+    assert result.exit_code == 0
+    assert "Created memoryfield" in result.output
+    body = conn.get_object(Bucket="cadentia-bucket", Key="cadentia/index.md")["Body"].read()
+    assert b"# cadentia" in body
+    field = config.load_config().fields["cadentia"]
+    assert field.transport == "s3"
+    assert field.location == "s3://cadentia-bucket/cadentia"
+
+
+@mock_aws
+def test_create_s3_existing_index_errors(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# existing\n")
+    result = cli_runner.invoke(
+        cli.cli, ["create", "cadentia", "--location", "s3://cadentia-bucket/cadentia"]
+    )
+    assert result.exit_code == 1
+    assert "already contains" in result.output

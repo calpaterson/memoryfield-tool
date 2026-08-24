@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 import click
 
-from . import config
+from . import config, transport
 
 
 def field_root(field: config.Field) -> Path:
@@ -25,17 +26,36 @@ def read_write_field(cfg: config.Config, field_name: str | None) -> config.Field
     raise click.ClickException("multiple memoryfields connected — specify --field")
 
 
-def require_local(field: config.Field) -> None:
-    if field.transport != "local":
-        raise click.ClickException(
-            f"memoryfield {field.name!r} uses transport {field.transport!r}; "
-            "only local transports are supported in v1"
+def index_location(field: config.Field) -> Path:
+    """Where the vector index sqlite file lives: in-field for local, cache for s3."""
+    if field.transport == "local":
+        from . import index
+
+        return field_root(field) / index.index_filename()
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return cache / "memoryfield-tool" / "indexes" / f"{field.name}.sqlite3"
+
+
+def _region_for(field: config.Field) -> str | None:
+    if field.region is not None:
+        return field.region
+    if field.endpoint_url is not None and "storage.googleapis.com" in field.endpoint_url:
+        return "auto"
+    return None
+
+
+def get_transport(field: config.Field) -> transport.Transport:
+    """The field's Transport, from the transport name and location."""
+    if field.transport == "local":
+        return transport.local(Path(field.location))
+    if field.transport == "s3":
+        bucket, prefix = transport.parse_s3_uri(field.location)
+        return transport.S3Transport(
+            bucket,
+            prefix,
+            endpoint_url=field.endpoint_url,
+            region=_region_for(field),
         )
-
-
-def resolve_page(field: config.Field, page_name: str) -> Path:
-    root = field_root(field)
-    resolved = (root / page_name).resolve()
-    if not resolved.is_relative_to(root):
-        raise click.ClickException(f"page {page_name!r} escapes the field root")
-    return resolved
+    raise click.ClickException(
+        f"memoryfield {field.name!r} uses unknown transport {field.transport!r}"
+    )

@@ -5,7 +5,7 @@ import time
 import pytest
 from conftest import ollama_available
 
-from memoryfield_tool import reindex
+from memoryfield_tool import config, fields, reindex
 
 
 @pytest.fixture
@@ -86,7 +86,9 @@ def test_background_reindex_e2e(cli_runner, config_env, tmp_path, monkeypatch):
     )
     assert result.exit_code == 0
 
-    index_path = loc / "nomic-embed-text-v1.5.sqlite3"
+    field = config.get_field(config.load_config(), "e2e")
+    index_path = fields.index_location(field)
+    assert index_path == loc / "nomic-embed-text-v1.5.sqlite3"
     deadline = time.time() + 30
     while time.time() < deadline:
         if index_path.is_file():

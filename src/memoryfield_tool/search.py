@@ -5,7 +5,8 @@ from pathlib import Path
 import pysqlite3 as sqlite3
 import sqlite_vec
 
-from . import config, embed, fields, frontmatter, index, pages
+from . import config, embed, fields, frontmatter, pages
+from .transport import Transport
 
 RESULT_LIMIT = 20
 
@@ -15,6 +16,7 @@ class SearchResult:
     filename: str
     summary: str
     distance: float | None
+    frontmatter: dict[str, object] | None = None
 
 
 def _open_index(path: Path) -> sqlite3.Connection:
@@ -28,7 +30,7 @@ def _open_index(path: Path) -> sqlite3.Connection:
 def _summary_from_json(fm_json: str) -> str:
     try:
         fm = json.loads(fm_json)
-    except ValueError, TypeError:
+    except ValueError:
         return ""
     if not isinstance(fm, dict):
         return ""
@@ -36,9 +38,8 @@ def _summary_from_json(fm_json: str) -> str:
     return str(summary) if summary is not None else ""
 
 
-def _vector_search(root: Path, query: str) -> list[SearchResult] | None:
-    idx = index.index_path(root)
-    if not idx.is_file():
+def _vector_search(index_loc: Path, query: str) -> list[SearchResult] | None:
+    if not index_loc.is_file():
         return None
     result = embed.embed_texts([f"search_query: {query}"])
     if result is None:
@@ -46,7 +47,7 @@ def _vector_search(root: Path, query: str) -> list[SearchResult] | None:
     [qvec] = result
     qblob = sqlite_vec.serialize_float32(qvec)
 
-    db = _open_index(idx)
+    db = _open_index(index_loc)
     try:
         cur = db.execute(
             "SELECT filename, vec_distance_cosine(embedding, ?) AS distance "
@@ -60,15 +61,31 @@ def _vector_search(root: Path, query: str) -> list[SearchResult] | None:
     return [
         SearchResult(
             filename=filename,
-            summary=_summary_from_index(idx, filename),
+            summary=_summary_from_index(index_loc, filename),
             distance=float(distance),
+            frontmatter=_frontmatter_from_index(index_loc, filename),
         )
         for filename, distance in rows
     ]
 
 
-def _summary_from_index(idx: Path, filename: str) -> str:
-    db = _open_index(idx)
+def _frontmatter_from_index(index_loc: Path, filename: str) -> dict[str, object] | None:
+    db = _open_index(index_loc)
+    try:
+        row = db.execute("SELECT frontmatter FROM pages WHERE filename = ?", (filename,)).fetchone()
+    finally:
+        db.close()
+    if row is None:
+        return None
+    try:
+        fm = json.loads(row[0])
+    except ValueError:
+        return None
+    return fm if isinstance(fm, dict) else None
+
+
+def _summary_from_index(index_loc: Path, filename: str) -> str:
+    db = _open_index(index_loc)
     try:
         row = db.execute("SELECT frontmatter FROM pages WHERE filename = ?", (filename,)).fetchone()
     finally:
@@ -78,31 +95,39 @@ def _summary_from_index(idx: Path, filename: str) -> str:
     return _summary_from_json(row[0])
 
 
-def _substring_search(root: Path, query: str) -> list[SearchResult]:
+def _substring_search(t: Transport, query: str) -> list[SearchResult]:
     needle = query.lower()
     results: list[SearchResult] = []
-    for f in pages.collect_pages(root):
-        text = f.read_text("utf-8", errors="replace")
+    for key in pages.collect_pages(t):
+        text = t.read_object(key).decode("utf-8", errors="replace")
         fm, _has = frontmatter.parse_frontmatter(text)
         fm_dict = fm if fm is not None else {}
         title = str(fm_dict.get("title", ""))
         summary = str(fm_dict.get("summary", ""))
-        if needle in f.name.lower() or needle in title.lower() or needle in summary.lower():
-            results.append(SearchResult(filename=f.name, summary=summary, distance=None))
+        if needle in key.lower() or needle in title.lower() or needle in summary.lower():
+            results.append(
+                SearchResult(
+                    filename=key,
+                    summary=summary,
+                    distance=None,
+                    frontmatter=fm,
+                )
+            )
     return results[:RESULT_LIMIT]
 
 
-def search_field(root: Path, query: str) -> list[SearchResult]:
-    vector = _vector_search(root, query)
+def search_field(t: Transport, index_loc: Path, query: str) -> list[SearchResult]:
+    vector = _vector_search(index_loc, query)
     if vector:
         return vector
-    return _substring_search(root, query)
+    return _substring_search(t, query)
 
 
 def search_all(field_list: list[config.Field], query: str) -> list[tuple[str, SearchResult]]:
     results: list[tuple[str, SearchResult]] = []
     for field in field_list:
-        root = fields.field_root(field)
-        for result in search_field(root, query):
+        t = fields.get_transport(field)
+        loc = fields.index_location(field)
+        for result in search_field(t, loc, query):
             results.append((field.name, result))
     return results

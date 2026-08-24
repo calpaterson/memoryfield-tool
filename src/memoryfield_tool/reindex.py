@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import config, fields, index, pages
+from . import config, fields, pages
 
 _LOG_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "memoryfield-tool"
 LOG_PATH = _LOG_DIR / "reindex.log"
@@ -18,8 +18,9 @@ def spawn_background_index(name: str) -> None:
     # rebuild if the index looks stale.
     cfg = config.load_config()
     field = config.get_field(cfg, name)
-    root = fields.field_root(field)
-    if not index.index_path(root).is_file() and not pages.collect_pages(root):
+    if not fields.index_location(field).is_file() and not pages.collect_pages(
+        fields.get_transport(field)
+    ):
         return
 
     _LOG_DIR.mkdir(parents=True, exist_ok=True)

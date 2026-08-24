@@ -16,6 +16,8 @@ class Field:
     name: str
     transport: str
     location: str
+    endpoint_url: str | None = None
+    region: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,8 @@ def load_config() -> Config:
                 name=name,
                 transport=str(raw.get("transport", "local")),
                 location=str(raw.get("location", "")),
+                endpoint_url=raw.get("endpoint_url"),
+                region=raw.get("region"),
             )
     return Config(fields=fields, path=path)
 
@@ -62,10 +66,15 @@ def save_config(cfg: Config) -> None:
     cfg.path.parent.mkdir(parents=True, exist_ok=True)
     memoryfields: dict[str, object] = {}
     for name, field in cfg.fields.items():
-        memoryfields[name] = {
+        entry: dict[str, object] = {
             "transport": field.transport,
             "location": field.location,
         }
+        if field.endpoint_url is not None:
+            entry["endpoint_url"] = field.endpoint_url
+        if field.region is not None:
+            entry["region"] = field.region
+        memoryfields[name] = entry
     payload: dict[str, object] = {"memoryfields": memoryfields}
 
     tmp = cfg.path.with_name(cfg.path.name + ".tmp")
@@ -74,12 +83,26 @@ def save_config(cfg: Config) -> None:
     os.replace(tmp, cfg.path)
 
 
-def add_field(cfg: Config, name: str, location: str) -> Field:
+def add_field(
+    cfg: Config,
+    name: str,
+    location: str,
+    *,
+    transport: str = "local",
+    endpoint_url: str | None = None,
+    region: str | None = None,
+) -> Field:
     if not NAME_RE.match(name):
         raise click.ClickException(f"invalid memoryfield name {name!r}")
     if name in cfg.fields:
         raise click.ClickException(f"memoryfield {name!r} already connected")
-    return Field(name=name, transport="local", location=location)
+    return Field(
+        name=name,
+        transport=transport,
+        location=location,
+        endpoint_url=endpoint_url,
+        region=region,
+    )
 
 
 def get_field(cfg: Config, name: str) -> Field:

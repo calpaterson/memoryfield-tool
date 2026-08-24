@@ -1,7 +1,8 @@
 import click
 import pytest
 
-from memoryfield_tool import config, fields
+from memoryfield_tool import config, fields, index
+from memoryfield_tool.transport import LocalTransport, S3Transport
 
 
 def _cfg_with(*names: str, config_env):
@@ -56,33 +57,60 @@ def test_read_write_field_multiple(config_env):
         fields.read_write_field(cfg, None)
 
 
-def test_require_local_ok(config_env):
-    field = config.add_field(config.load_config(), "notes", "/tmp/notes")
-    fields.require_local(field)
+def test_index_location_local(field_dir, config_env):
+    field = config.Field(name="notes", transport="local", location=str(field_dir))
+    assert fields.index_location(field) == field_dir / index.index_filename()
 
 
-def test_require_local_rejects_other(config_env):
+def test_index_location_s3_cache(tmp_path, config_env, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    field = config.Field(name="notes", transport="s3", location="s3://bucket/prefix")
+    expected = tmp_path / "cache" / "memoryfield-tool" / "indexes" / "notes.sqlite3"
+    assert fields.index_location(field) == expected
+
+
+def test_get_transport_local(field_dir, config_env):
+    field = config.Field(name="notes", transport="local", location=str(field_dir))
+    t = fields.get_transport(field)
+    assert isinstance(t, LocalTransport)
+    assert t.root == field_dir.resolve()
+
+
+def test_get_transport_s3(config_env):
+    field = config.Field(name="cadentia", transport="s3", location="s3://cadentia-bucket/cadentia")
+    t = fields.get_transport(field)
+    assert isinstance(t, S3Transport)
+    assert t.bucket == "cadentia-bucket"
+    assert t.prefix == "cadentia"
+
+
+def test_get_transport_unknown_errors(config_env):
+    field = config.Field(name="remote", transport="http", location="https://example.com")
+    with pytest.raises(click.ClickException, match="unknown transport"):
+        fields.get_transport(field)
+
+
+def test_region_for_gcs_default(config_env):
     field = config.Field(
-        name="remote",
-        transport="http",
-        location="https://example.com",
+        name="notes",
+        transport="s3",
+        location="s3://b/x",
+        endpoint_url="https://storage.googleapis.com",
     )
-    with pytest.raises(click.ClickException, match="only local"):
-        fields.require_local(field)
+    assert fields._region_for(field) == "auto"
 
 
-def test_resolve_page_normal(connected):
-    _cfg_path, field_path = connected
-    cfg = config.load_config()
-    field = config.get_field(cfg, "notes")
-    assert fields.resolve_page(field, "alpha.md") == (field_path / "alpha.md").resolve()
+def test_region_for_explicit_override(config_env):
+    field = config.Field(
+        name="notes",
+        transport="s3",
+        location="s3://b/x",
+        endpoint_url="https://storage.googleapis.com",
+        region="us-central1",
+    )
+    assert fields._region_for(field) == "us-central1"
 
 
-def test_resolve_page_rejects_escape(connected):
-    _cfg_path, field_path = connected
-    cfg = config.load_config()
-    field = config.get_field(cfg, "notes")
-    with pytest.raises(click.ClickException, match="escapes"):
-        fields.resolve_page(field, "../outside.md")
-    with pytest.raises(click.ClickException, match="escapes"):
-        fields.resolve_page(field, "/etc/passwd")
+def test_region_for_non_gcs_none(config_env):
+    field = config.Field(name="notes", transport="s3", location="s3://b/x")
+    assert fields._region_for(field) is None
