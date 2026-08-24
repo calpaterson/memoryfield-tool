@@ -461,6 +461,7 @@ def test_schema_output(cli_runner):
     assert {
         "write",
         "new",
+        "edit",
         "read",
         "search",
         "catalog",

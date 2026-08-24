@@ -33,6 +33,7 @@ connect NAME LOCATION             Connect an existing directory (or s3:// URI)
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
 validate [--field NAME]           Check a field against the spec
 read [--field NAME] PAGES...      Print pages with line numbers
+edit [--field NAME] PAGE          Open a page in $EDITOR and write it back
 write [--field NAME] PAGE         Write stdin to a page (auto frontmatter;
                                   background reindex)
 new TITLE [--field NAME] [--name PAGE]   Create a page (generated frontmatter,
@@ -98,6 +99,10 @@ memoryfield-tool create cadentia --location s3://cadentia-bucket/cadentia \
 - `write --append` on s3 is a read-modify-write (S3 has no native append), so
   concurrent appends can lose data; prefer `write --force` (PUT) for anything
   contended.
+- `edit` opens any page in $EDITOR (falling back to $VISUAL, then vi) and
+  writes back on save; s3 pages are downloaded to a temp file and uploaded
+  through the same validation as write. The editor must block until you save
+  and quit (e.g. 'code -w', not bare 'code').
 
 ## Serving over HTTP (`serve`)
 

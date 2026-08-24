@@ -1,5 +1,9 @@
 import json
+import os
+import shlex
+import subprocess
 import sys
+import tempfile
 import webbrowser
 from pathlib import Path
 from uuid import uuid6
@@ -78,6 +82,11 @@ def _schema_callback(ctx: click.Context, param: click.Parameter, value: bool) ->
 )
 def cli() -> None:
     """memoryfield CLI tool."""
+
+
+def _is_interactive() -> bool:
+    """True when stdin is a terminal (edit is a human command)."""
+    return sys.stdin.isatty()
 
 
 def _resolve_field_location(field_name: str, location: str | None) -> Path:
@@ -545,6 +554,97 @@ def new(
     click.echo(f"Created {field.name}/{slug}")
     if result.uuid:
         click.echo(f"  uuid: {result.uuid}")
+
+
+@cli.command()
+@click.argument("page")
+@click.option("--field", "field_name", default=None, help="Memoryfield to edit")
+@click.option(
+    "--editor",
+    default=None,
+    help="Editor command (default: $VISUAL, $EDITOR, then vi). May include arguments.",
+)
+def edit(page: str, field_name: str | None, editor: str | None) -> None:
+    """Open a page in $EDITOR and write it back to the field on save.
+
+    The page is copied to a temporary file, opened in the editor
+    ($VISUAL, then $EDITOR, then vi; or --editor), and written back
+    through the same validation path as `write` (UTF-8, non-empty,
+    uuid preserved) when the editor exits successfully. Works
+    identically for local and s3 fields. The editor must block until
+    you save and quit (e.g. 'code -w', not bare 'code').
+
+    Examples:
+
+    \b
+        memoryfield-tool edit alpha.md
+        memoryfield-tool edit --field notes alpha.md
+        EDITOR='code -w' memoryfield-tool edit alpha.md
+    """
+    if not pages_mod.is_page_filename(page):
+        raise click.ClickException(
+            f"invalid page filename {page!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
+        )
+    if editor is None and not _is_interactive():
+        configured = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+        if not configured:
+            raise click.ClickException(
+                "edit is interactive and needs a terminal, and no editor "
+                "is configured (set $EDITOR/$VISUAL or pass --editor)"
+            )
+
+    editor_cmd = editor or os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
+    try:
+        editor_parts = shlex.split(editor_cmd)
+    except ValueError as e:
+        raise click.ClickException(f"invalid editor command {editor_cmd!r}: {e}") from None
+    if not editor_parts:
+        raise click.ClickException(f"empty editor command {editor_cmd!r}")
+
+    cfg = config.load_config()
+    field = fields.read_write_field(cfg, field_name)
+    t = fields.get_transport(field)
+    try:
+        raw = t.read_object(page)
+    except transport.ObjectNotFound:
+        raise click.ClickException(f"page not found: {page} (use 'new' to create it)") from None
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise click.ClickException(f"cannot edit {page}: not valid UTF-8") from None
+
+    fd, tmp_path = tempfile.mkstemp(prefix="memoryfield-edit-", suffix=".md")
+    keep_temp = False
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        proc = subprocess.run([*editor_parts, tmp_path], check=False)
+        if proc.returncode != 0:
+            keep_temp = True
+            raise click.ClickException(
+                f"editor exited with status {proc.returncode}; no changes written "
+                f"(your edits are at {tmp_path})"
+            )
+        try:
+            edited = Path(tmp_path).read_bytes()
+        except OSError:
+            keep_temp = True
+            raise click.ClickException(f"editor did not leave a file at {tmp_path}") from None
+        if edited == raw:
+            click.echo(f"no changes to {field.name}/{page}", err=True)
+            return
+        try:
+            result = pages_mod.write_page(
+                t, page, edited, force=True, title_fallback=Path(page).stem
+            )
+        except pages_mod.PageWriteError as e:
+            keep_temp = True
+            raise click.ClickException(f"{e} (your edits are at {tmp_path})") from None
+        reindex.spawn_background_index(field.name)
+        click.echo(f"Wrote {result.bytes_written} bytes to {field.name}/{page}", err=True)
+    finally:
+        if not keep_temp:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 @cli.command(name="index")

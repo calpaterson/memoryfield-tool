@@ -95,3 +95,17 @@ def connected(config_env, field_dir):
 @pytest.fixture
 def cli_runner():
     return CliRunner()
+
+
+@pytest.fixture
+def editor_script(tmp_path):
+    counter = {"n": 0}
+
+    def make(body: str) -> Path:
+        counter["n"] += 1
+        p = tmp_path / f"editor-{counter['n']}.sh"
+        p.write_text("#!/bin/sh\n" + body + "\n", encoding="utf-8")
+        p.chmod(0o755)
+        return p
+
+    return make
