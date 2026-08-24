@@ -33,13 +33,28 @@ connect NAME LOCATION             Connect an existing directory (or s3:// URI)
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
 validate [--field NAME]           Check a field against the spec
 read [--field NAME] PAGES...      Print pages with line numbers
-write [--field NAME] PAGE         Write stdin to a page (background reindex)
+write [--field NAME] PAGE         Write stdin to a page (auto frontmatter;
+                                  background reindex)
+new TITLE [--field NAME] [--name PAGE]   Create a page (generated frontmatter,
+                                  slugified filename)
 index [--field NAME]              Build or update the vector index
 search [--field NAME] QUERY       Semantic search (substring fallback)
 export [--field NAME]             Write the field as a .memoryfield.zip
 serve [--port N] [--host H]       Serve all fields over HTTP (spec data
       [--allow-writes] [--open]     server + HTML renderer)
 ```
+
+### Agent-friendly page creation
+
+`write` fills missing frontmatter (`uuid`, `created`, `updated`; `title` from
+the filename stem) — no `uuidgen`, no hand-built YAML.  A summary is never
+inferred; pass `--summary` to set one.  `write --force` preserves the stored
+`uuid`/`created`/`updated`/`title` (rewrites stay byte-idempotent; pass
+`--title` to override) and rejects a conflicting incoming `uuid`.  `new`
+derives the page filename from the title (`--name` overrides) and prints the
+created page + uuid.  `memoryfield-tool --schema` prints the full command
+reference (commands, flags, defaults, choices) as JSON for agents to
+introspect at runtime.
 
 ## S3-compatible stores
 

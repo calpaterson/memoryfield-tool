@@ -32,7 +32,13 @@ def test_put_creates_page(write_app, connected, fake_embed):
     resp = client.put("/notes/new-page.md", data=body)
     assert resp.status_code == 201
     assert resp.headers["Location"] == "/notes/new-page.md"
-    assert (field_path / "new-page.md").read_bytes() == body
+    text = (field_path / "new-page.md").read_text(encoding="utf-8")
+    fm = _frontmatter(text)
+    assert fm["title"] == "New"
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert text.endswith("new content\n")
 
     db = index._open_index(index.index_path(field_path))
     row = db.execute("SELECT filename FROM pages WHERE filename = 'new-page.md'").fetchone()

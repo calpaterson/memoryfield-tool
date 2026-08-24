@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 import pytest
@@ -13,8 +14,23 @@ from memoryfield_tool.pages import (
     collect_pages,
     is_page_filename,
     page_infos,
+    slugify_title,
     write_page,
 )
+
+
+@pytest.mark.parametrize(
+    "title,slug",
+    [
+        ("Carbon Fibre Woks", "carbon-fibre-woks"),
+        ("  Leading/trailing  ", "leading-trailing"),
+        ("One Piece (2026)", "one-piece-2026"),
+        ("Päivänkaari 7", "paivankaari-7"),
+        ("!!!", ""),
+    ],
+)
+def test_slugify_title(title, slug):
+    assert slugify_title(title) == slug
 
 
 @pytest.mark.parametrize(
@@ -94,8 +110,13 @@ def test_write_creates_page(field_dir):
         transport.local(field_dir), "new.md", b"---\ntitle: New\n---\n\nnew content\n"
     )
     assert result.created is True
-    assert result.bytes_written == len(b"---\ntitle: New\n---\n\nnew content\n")
-    assert (field_dir / "new.md").read_bytes() == b"---\ntitle: New\n---\n\nnew content\n"
+    text = (field_dir / "new.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["title"] == "New"
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert text.endswith("new content\n")
 
 
 def test_write_overwrite_refused(field_dir):
@@ -109,7 +130,12 @@ def test_write_force_overwrites(field_dir):
     (field_dir / "plain.md").write_text("old plain content", encoding="utf-8")
     result = write_page(transport.local(field_dir), "plain.md", b"new content", force=True)
     assert result.created is False
-    assert (field_dir / "plain.md").read_text(encoding="utf-8") == "new content"
+    text = (field_dir / "plain.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert text.endswith("new content")
 
 
 def test_write_append(field_dir):
@@ -166,3 +192,67 @@ def test_write_uuid_preserved(field_dir):
     assert result.created is False
     new_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
     assert frontmatter.get_frontmatter_field(new_text, "uuid") == old_uuid
+
+
+_UUID6_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-6[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
+
+def test_write_auto_fill_bare_body(field_dir):
+    result = write_page(transport.local(field_dir), "note.md", b"note body\n")
+    assert result.created is True
+    text = (field_dir / "note.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert _UUID6_RE.fullmatch(fm["uuid"])
+    assert result.uuid == fm["uuid"]
+    assert datetime.fromisoformat(fm["created"]) is not None
+    assert datetime.fromisoformat(fm["updated"]) is not None
+    assert fm["title"] == "note"
+    assert "summary" not in fm
+    assert text.endswith("note body\n")
+
+
+def test_write_auto_fill_with_flags(field_dir):
+    result = write_page(
+        transport.local(field_dir),
+        "note.md",
+        b"note body\n",
+        title="A Title",
+        summary="A summary.",
+        title_fallback="ignored",
+    )
+    assert result.created is True
+    fm, _ = frontmatter.parse_frontmatter((field_dir / "note.md").read_text(encoding="utf-8"))
+    assert fm["title"] == "A Title"
+    assert fm["summary"] == "A summary."
+
+
+def test_write_force_preserves_stored_metadata(field_dir):
+    old_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
+    old_fm, _ = frontmatter.parse_frontmatter(old_text)
+    result = write_page(transport.local(field_dir), "alpha.md", b"fresh body\n", force=True)
+    assert result.created is False
+    new_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
+    new_fm, _ = frontmatter.parse_frontmatter(new_text)
+    assert new_fm["uuid"] == old_fm["uuid"]
+    assert new_fm["created"] == old_fm["created"]
+    assert new_fm["updated"] == old_fm["updated"]
+    assert new_fm["title"] == old_fm["title"]
+    assert new_text.endswith("fresh body\n")
+
+
+def test_write_force_differing_uuid_conflict(field_dir):
+    with pytest.raises(UuidConflict):
+        write_page(
+            transport.local(field_dir),
+            "alpha.md",
+            b"---\nuuid: 11111111-2222-3333-4444-555555555555\n---\n\nbody\n",
+            force=True,
+        )
+
+
+def test_write_append_raw_bytes_uuid_none(field_dir):
+    (field_dir / "plain.md").write_text("first\n", encoding="utf-8")
+    result = write_page(transport.local(field_dir), "plain.md", b"second\n", append=True)
+    assert result.created is False
+    assert result.uuid is None
+    assert (field_dir / "plain.md").read_text(encoding="utf-8") == "first\nsecond\n"

@@ -137,7 +137,9 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         if request.method == "PUT":
             body = request.get_data()
             try:
-                result = pages.write_page(t, filename, body, force=True)
+                result = pages.write_page(
+                    t, filename, body, force=True, title_fallback=filename.removesuffix(".md")
+                )
             except pages.InvalidFilename:
                 return Response("invalid page filename", status=400)
             except pages.EmptyBody:

@@ -1,5 +1,6 @@
 from memoryfield_tool.frontmatter import (
     build_frontmatter,
+    fill_frontmatter,
     get_frontmatter_field,
     parse_frontmatter,
     set_frontmatter_field,
@@ -105,3 +106,120 @@ def test_unknown_fields_do_not_raise():
     fm, has = parse_frontmatter(text)
     assert has is True
     assert fm["custom_field"] == "whatever"
+
+
+def test_fill_bare_body_prepends_block():
+    result = fill_frontmatter(
+        "plain body\n",
+        title="My Page",
+        uuid="u-1",
+        created="2026-01-01T00:00:00Z",
+        updated="2026-01-02T00:00:00Z",
+    )
+    fm, has = parse_frontmatter(result)
+    assert has is True
+    assert fm == {
+        "uuid": "u-1",
+        "created": "2026-01-01T00:00:00Z",
+        "updated": "2026-01-02T00:00:00Z",
+        "title": "My Page",
+    }
+    assert "summary" not in fm
+    assert result.endswith("plain body\n")
+
+
+def test_fill_partial_block_fills_gaps():
+    text = "---\ntitle: X\n---\n\nbody\n"
+    result = fill_frontmatter(text, title="Ignored", uuid="u-1", created="c-1", updated="u-2")
+    fm, _ = parse_frontmatter(result)
+    assert fm["title"] == "X"
+    assert fm["uuid"] == "u-1"
+    assert fm["created"] == "c-1"
+    assert fm["updated"] == "u-2"
+
+
+def test_fill_malformed_yaml_untouched():
+    text = "---\ntitle: [unclosed\n---\nbody\n"
+    assert fill_frontmatter(text, uuid="u-1") == text
+
+
+def test_fill_unclosed_markers_untouched():
+    text = "---\ntitle: never closed\n"
+    assert fill_frontmatter(text, uuid="u-1") == text
+
+
+def test_fill_no_summary_without_source():
+    result = fill_frontmatter("body\n", uuid="u-1")
+    fm, _ = parse_frontmatter(result)
+    assert "summary" not in fm
+
+
+def test_fill_summary_flag_adds_summary():
+    text = "---\nuuid: u-1\ncreated: c-1\nupdated: u-2\ntitle: T\n---\n\nbody\n"
+    result = fill_frontmatter(text, summary="A summary.")
+    fm, _ = parse_frontmatter(result)
+    assert fm["summary"] == "A summary."
+
+
+def test_fill_preserve_fills_all_keys():
+    preserve = {
+        "uuid": "stored-uuid",
+        "created": "stored-created",
+        "updated": "stored-updated",
+        "title": "Stored Title",
+        "summary": "Stored summary.",
+    }
+    result = fill_frontmatter("body\n", preserve=preserve)
+    fm, _ = parse_frontmatter(result)
+    assert fm == preserve
+
+
+def test_fill_explicit_flag_beats_preserve():
+    preserve = {"title": "Stored", "summary": "Stored summary."}
+    result = fill_frontmatter(
+        "body\n", title="Flag Title", summary="Flag summary.", preserve=preserve
+    )
+    fm, _ = parse_frontmatter(result)
+    assert fm["title"] == "Flag Title"
+    assert fm["summary"] == "Flag summary."
+
+
+def test_fill_stored_beats_generated():
+    preserve = {"uuid": "stored-uuid", "created": "stored-created", "updated": "stored-updated"}
+    result = fill_frontmatter(
+        "body\n",
+        preserve=preserve,
+        uuid="fresh-uuid",
+        created="fresh-created",
+        updated="fresh-updated",
+    )
+    fm, _ = parse_frontmatter(result)
+    assert fm["uuid"] == "stored-uuid"
+    assert fm["created"] == "stored-created"
+    assert fm["updated"] == "stored-updated"
+
+
+def test_fill_title_fallback_only_when_all_else_missing():
+    preserve = {"title": "Stored"}
+    result = fill_frontmatter("body\n", title_fallback="Fallback", preserve=preserve)
+    fm, _ = parse_frontmatter(result)
+    assert fm["title"] == "Stored"
+
+    result = fill_frontmatter("body\n", title_fallback="Fallback")
+    fm, _ = parse_frontmatter(result)
+    assert fm["title"] == "Fallback"
+
+
+def test_fill_complete_block_byte_identical():
+    text = "---\ntitle: T\nuuid: u-1\ncreated: c-1\nupdated: u-2\n---\n\nbody\n"
+    assert fill_frontmatter(text) == text
+
+
+def test_fill_explicit_generated_used_when_missing():
+    result = fill_frontmatter(
+        "body\n", uuid="gen-uuid", created="gen-created", updated="gen-updated"
+    )
+    fm, _ = parse_frontmatter(result)
+    assert fm["uuid"] == "gen-uuid"
+    assert fm["created"] == "gen-created"
+    assert fm["updated"] == "gen-updated"

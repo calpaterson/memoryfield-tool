@@ -7,15 +7,75 @@ from uuid import uuid6
 import click
 from waitress import serve as waitress_serve
 
+from . import (
+    __version__,
+    config,
+    export,
+    fields,
+    frontmatter,
+    index,
+    reindex,
+    search,
+    transport,
+    validate,
+    web,
+)
 from . import catalog as catalog_mod
-from . import config, export, fields, frontmatter, index, reindex, search, transport, validate, web
 from . import pages as pages_mod
 
 _SORT_CHOICES = ["path", "title", "created", "updated"]
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
+def _jsonable(value: object) -> object:
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
+def _dump_schema() -> str:
+    commands: list[dict[str, object]] = []
+    for name in sorted(cli.commands):
+        cmd = cli.commands[name]
+        summary = (cmd.help or "").splitlines()[0] if cmd.help else ""
+        params: list[dict[str, object]] = []
+        for p in cmd.params:
+            if not isinstance(p, click.Option):
+                continue
+            entry: dict[str, object] = {
+                "name": p.name,
+                "opts": p.opts,
+                "secondary_opts": p.secondary_opts,
+                "required": p.required,
+                "default": _jsonable(p.default),
+                "type": type(p.type).__name__,
+                "help": p.help,
+            }
+            if isinstance(p.type, click.Choice):
+                entry["choices"] = p.type.choices
+            params.append(entry)
+        commands.append({"name": name, "summary": summary, "help": cmd.help, "params": params})
+    return json.dumps(
+        {"tool": "memoryfield-tool", "version": __version__, "commands": commands},
+        indent=2,
+    )
+
+
+def _schema_callback(ctx: click.Context, param: click.Parameter, value: bool) -> None:
+    if value:
+        click.echo(_dump_schema())
+        raise click.exceptions.Exit(0)
+
+
 @click.group()
+@click.option(
+    "--schema",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    help="Print the full command schema as JSON and exit.",
+    callback=_schema_callback,
+)
 def cli() -> None:
     """memoryfield CLI tool."""
 
@@ -47,7 +107,14 @@ def create(
     aws_secret_access_key: str | None,
     aws_session_token: str | None,
 ) -> None:
-    """Create a new memoryfield with an introductory index page."""
+    """Create a new memoryfield with an introductory index page.
+
+    Examples:
+
+    \b
+        memoryfield-tool create notes
+        memoryfield-tool create cadentia --location s3://bucket/cadentia
+    """
     cfg = config.load_config()
 
     now = config.now_iso()
@@ -129,7 +196,14 @@ def connect(
     aws_secret_access_key: str | None,
     aws_session_token: str | None,
 ) -> None:
-    """Connect an existing directory (or s3://bucket/prefix) as a memoryfield."""
+    """Connect an existing directory (or s3://bucket/prefix) as a memoryfield.
+
+    Examples:
+
+    \b
+        memoryfield-tool connect notes ~/memoryfields/notes
+        memoryfield-tool connect cadentia s3://bucket/cadentia --endpoint-url https://...
+    """
     cfg = config.load_config()
     if location.startswith("s3://"):
         transport.parse_s3_uri(location)
@@ -197,7 +271,14 @@ def _catalog_markdown(rows: list[dict[str, object]], multi_field: bool) -> str:
 )
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
 def catalog(field_name: str | None, sort_by: str, as_json: bool) -> None:
-    """List all pages across connected memoryfields with frontmatter metadata."""
+    """List all pages across connected memoryfields with frontmatter metadata.
+
+    Examples:
+
+    \b
+        memoryfield-tool catalog --sort updated
+        memoryfield-tool catalog --json
+    """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
 
@@ -257,7 +338,13 @@ def read_cmd(
     no_limit: bool,
     no_line_numbers: bool,
 ) -> None:
-    """Read one or more pages from a memoryfield."""
+    """Read one or more pages from a memoryfield.
+
+    Examples:
+
+    \b
+        memoryfield-tool read alpha.md --offset 5 --limit 20
+    """
     cfg = config.load_config()
     field = fields.read_write_field(cfg, field_name)
     t = fields.get_transport(field)
@@ -310,8 +397,33 @@ def read_cmd(
 @click.option("--force", is_flag=True, help="Overwrite existing file")
 @click.option("--append", is_flag=True, help="Append to existing file instead of overwriting")
 @click.option("--dry-run", is_flag=True, help="Print content to stdout instead of writing")
-def write(page: str, field_name: str | None, force: bool, append: bool, dry_run: bool) -> None:
-    """Write stdin to a page in a memoryfield."""
+@click.option(
+    "--title", default=None, help="Frontmatter title (default: stored title, else filename stem)"
+)
+@click.option("--summary", default=None, help="Frontmatter summary (only set when provided)")
+def write(
+    page: str,
+    field_name: str | None,
+    force: bool,
+    append: bool,
+    dry_run: bool,
+    title: str | None,
+    summary: str | None,
+) -> None:
+    """Write stdin to a page in a memoryfield.
+
+    Missing frontmatter (uuid, created, updated, title) is filled in; a
+    summary is never inferred (pass --summary to set one). On overwrite the
+    stored uuid/created/updated/title are preserved and updated is not
+    refreshed; pass --title to override the title.
+
+    Examples:
+
+    \b
+        echo '# New page' | memoryfield-tool write new-page.md
+        echo '# New page' | memoryfield-tool write new-page.md --title 'New Page' --summary 'About'
+        memoryfield-tool write --dry-run new-page.md < draft.md
+    """
     if not pages_mod.is_page_filename(page):
         raise click.ClickException(
             f"invalid page filename {page!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
@@ -325,7 +437,16 @@ def write(page: str, field_name: str | None, force: bool, append: bool, dry_run:
         raise click.ClickException("refusing to write an empty page")
 
     if dry_run:
-        click.echo(body, nl=False)
+        filled = frontmatter.fill_frontmatter(
+            body,
+            title=title,
+            summary=summary,
+            title_fallback=Path(page).stem,
+            uuid=str(uuid6()),
+            created=config.now_iso(),
+            updated=config.now_iso(),
+        )
+        click.echo(filled, nl=False)
         return
 
     cfg = config.load_config()
@@ -333,7 +454,16 @@ def write(page: str, field_name: str | None, force: bool, append: bool, dry_run:
     t = fields.get_transport(field)
 
     try:
-        result = pages_mod.write_page(t, page, raw, force=force, append=append)
+        result = pages_mod.write_page(
+            t,
+            page,
+            raw,
+            force=force,
+            append=append,
+            title=title,
+            summary=summary,
+            title_fallback=Path(page).stem,
+        )
     except pages_mod.PageWriteError as e:
         raise click.ClickException(str(e)) from None
 
@@ -341,10 +471,92 @@ def write(page: str, field_name: str | None, force: bool, append: bool, dry_run:
     click.echo(f"Wrote {result.bytes_written} bytes to {field.name}/{page}", err=True)
 
 
+@cli.command()
+@click.argument("title")
+@click.option("--field", "field_name", default=None, help="Memoryfield to create the page in")
+@click.option("--name", "page_name", default=None, help="Page filename (default: slugified title)")
+@click.option("--summary", default=None, help="Frontmatter summary (only set when provided)")
+@click.option(
+    "--dry-run", is_flag=True, help="Print the would-be page to stdout instead of creating"
+)
+def new(
+    title: str, field_name: str | None, page_name: str | None, summary: str | None, dry_run: bool
+) -> None:
+    """Create a new page with generated frontmatter.
+
+    The filename is derived from the title (lowercase, hyphenated) unless
+    --name is given. uuid, created and updated are generated; title comes
+    from the argument; summary is only set when --summary is provided.
+    The body is read from stdin when piped, otherwise a bare
+    "# <title>" skeleton is used.
+
+    Examples:
+
+    \b
+        echo '# Notes' | memoryfield-tool new 'Carbon Fibre Woks' --summary 'Thermal properties'
+        memoryfield-tool new 'Carbon Fibre Woks' --name carbon-fibre.md
+        memoryfield-tool new 'Draft' --dry-run
+    """
+    slug = page_name or pages_mod.slugify_title(title)
+    if not slug.endswith(".md"):
+        slug += ".md"
+    if not pages_mod.is_page_filename(slug):
+        raise click.ClickException(
+            f"cannot derive a valid page filename from title {title!r} (pass --name)"
+        )
+
+    raw = sys.stdin.buffer.read() if not sys.stdin.isatty() else b""
+    if not raw.strip():
+        raw = f"# {title}\n\n".encode()
+
+    stem = slug.removesuffix(".md")
+    if dry_run:
+        try:
+            body = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise click.ClickException("body is not valid UTF-8") from None
+        filled = frontmatter.fill_frontmatter(
+            body,
+            title=title,
+            summary=summary,
+            title_fallback=stem,
+            uuid=str(uuid6()),
+            created=config.now_iso(),
+            updated=config.now_iso(),
+        )
+        click.echo(filled, nl=False)
+        return
+
+    cfg = config.load_config()
+    field = fields.read_write_field(cfg, field_name)
+    t = fields.get_transport(field)
+    try:
+        result = pages_mod.write_page(
+            t, slug, raw, title=title, summary=summary, title_fallback=stem
+        )
+    except pages_mod.FileExists:
+        raise click.ClickException(
+            f"page already exists: {slug} (use write --force to overwrite)"
+        ) from None
+    except pages_mod.PageWriteError as e:
+        raise click.ClickException(str(e)) from None
+
+    reindex.spawn_background_index(field.name)
+    click.echo(f"Created {field.name}/{slug}")
+    if result.uuid:
+        click.echo(f"  uuid: {result.uuid}")
+
+
 @cli.command(name="index")
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
 def index_cmd(field_name: str | None) -> None:
-    """Build or update the vector index for one or more memoryfields."""
+    """Build or update the vector index for one or more memoryfields.
+
+    Examples:
+
+    \b
+        memoryfield-tool index --field notes
+    """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
@@ -380,7 +592,14 @@ def _format_result(result: search.SearchResult) -> str:
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
 def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
-    """Search pages across connected memoryfields."""
+    """Search pages across connected memoryfields.
+
+    Examples:
+
+    \b
+        memoryfield-tool search 'carbon fibre'
+        memoryfield-tool search --json 'carbon fibre'
+    """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
 
@@ -413,7 +632,13 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
 @cli.command(name="validate")
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
 def validate_cmd(field_name: str | None) -> None:
-    """Validate connected memoryfields against the spec."""
+    """Validate connected memoryfields against the spec.
+
+    Examples:
+
+    \b
+        memoryfield-tool validate --field notes
+    """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     any_error = False
@@ -438,7 +663,13 @@ def validate_cmd(field_name: str | None) -> None:
     "--output", "output", default=None, help="Output zip path (default ./<name>.memoryfield.zip)"
 )
 def export_cmd(field_name: str | None, output: str | None) -> None:
-    """Export one or more memoryfields as .memoryfield.zip archives."""
+    """Export one or more memoryfields as .memoryfield.zip archives.
+
+    Examples:
+
+    \b
+        memoryfield-tool export --field notes --output /tmp/notes.memoryfield.zip
+    """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     for field in field_list:
@@ -461,7 +692,13 @@ def export_cmd(field_name: str | None, output: str | None) -> None:
 )
 @click.option("--open", "open_browser", is_flag=True, help="Open the landing page in a browser")
 def serve(port: int, host: str, allow_writes: bool, open_browser: bool) -> None:
-    """Serve connected memoryfields over HTTP (spec data server + HTML)."""
+    """Serve connected memoryfields over HTTP (spec data server + HTML).
+
+    Examples:
+
+    \b
+        memoryfield-tool serve --port 7000 --open
+    """
     if allow_writes and host not in _LOOPBACK_HOSTS:
         raise click.ClickException(
             f"refusing to enable --allow-writes on non-loopback host {host!r} "

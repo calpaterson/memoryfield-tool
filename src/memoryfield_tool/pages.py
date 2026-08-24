@@ -1,10 +1,24 @@
 import re
+import unicodedata
 from dataclasses import dataclass
+from uuid import uuid6
 
-from . import frontmatter
+from . import config, frontmatter
 from .transport import ObjectInfo, Transport
 
 PAGE_FILENAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+
+
+def slugify_title(title: str) -> str:
+    """Derive a spec-valid page-name stem from a title.
+
+    NFKD-normalizes (dropping combining marks, so 'ä' -> 'a'), lowercases,
+    collapses runs of non [a-z0-9] to '-', strips leading/trailing '-'.
+    Returns '' when nothing usable remains.
+    """
+    nfkd = unicodedata.normalize("NFKD", title)
+    ascii_ish = "".join(c for c in nfkd if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", "-", ascii_ish.lower()).strip("-")
 
 
 class PageWriteError(Exception):
@@ -51,6 +65,7 @@ class UuidConflict(PageWriteError):
 class WriteResult:
     created: bool
     bytes_written: int
+    uuid: str | None = None
 
 
 def write_page(
@@ -60,6 +75,9 @@ def write_page(
     *,
     force: bool = False,
     append: bool = False,
+    title: str | None = None,
+    summary: str | None = None,
+    title_fallback: str | None = None,
 ) -> WriteResult:
     """Validate and write a page, applying the v1 CLI write rules."""
     if not is_page_filename(filename):
@@ -76,18 +94,47 @@ def write_page(
     if t.exists(filename) and not force and not append:
         raise FileExists(filename)
 
-    if t.exists(filename) and not append:
-        old_text = t.read_object(filename).decode("utf-8", errors="replace")
-        old_uuid = frontmatter.get_frontmatter_field(old_text, "uuid")
-        new_uuid = frontmatter.get_frontmatter_field(text, "uuid")
-        if old_uuid is not None and new_uuid is not None and old_uuid != new_uuid:
-            raise UuidConflict(filename, old_uuid, new_uuid)
-        if old_uuid is not None and new_uuid is None:
-            text = frontmatter.set_frontmatter_field(text, "uuid", old_uuid)
+    if append:
+        t.write_object(filename, body, append=append)
+        return WriteResult(created=created, bytes_written=len(body))
 
-    data = body if append else text.encode("utf-8")
-    t.write_object(filename, data, append=append)
-    return WriteResult(created=created, bytes_written=len(data))
+    old_text: str | None = None
+    stored_fm: dict[str, object] = {}
+    if t.exists(filename):
+        old_text = t.read_object(filename).decode("utf-8", errors="replace")
+        stored, _has = frontmatter.parse_frontmatter(old_text)
+        if stored is None:
+            stored = {}
+        stored_fm = stored
+
+    if title_fallback is None:
+        title_fallback = filename.removesuffix(".md")
+
+    filled = frontmatter.fill_frontmatter(
+        text,
+        title=title,
+        summary=summary,
+        title_fallback=title_fallback,
+        preserve=stored_fm,
+        uuid=str(uuid6()),
+        created=config.now_iso(),
+        updated=config.now_iso(),
+    )
+
+    new_uuid = frontmatter.get_frontmatter_field(filled, "uuid")
+    stored_uuid = (
+        frontmatter.get_frontmatter_field(old_text, "uuid") if old_text is not None else None
+    )
+    if new_uuid is not None and stored_uuid is not None and new_uuid != stored_uuid:
+        raise UuidConflict(filename, stored_uuid, new_uuid)
+
+    data = filled.encode("utf-8")
+    t.write_object(filename, data)
+    return WriteResult(
+        created=created,
+        bytes_written=len(data),
+        uuid=new_uuid if isinstance(new_uuid, str) else None,
+    )
 
 
 def is_page_filename(name: str) -> bool:

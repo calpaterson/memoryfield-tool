@@ -207,7 +207,13 @@ def test_write_creates_page(cli_runner, connected, monkeypatch):
     content = "---\ntitle: New\n---\n\nnew content\n"
     result = cli_runner.invoke(cli.cli, ["write", "new.md"], input=content)
     assert result.exit_code == 0
-    assert (field_path / "new.md").read_text(encoding="utf-8") == content
+    text = (field_path / "new.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["title"] == "New"
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert text.endswith("new content\n")
     assert "Wrote" in result.output
 
 
@@ -227,7 +233,12 @@ def test_write_force_overwrites(cli_runner, connected, monkeypatch):
     (field_path / "plain.md").write_text("old plain content", encoding="utf-8")
     result = cli_runner.invoke(cli.cli, ["write", "--force", "plain.md"], input="new content")
     assert result.exit_code == 0
-    assert (field_path / "plain.md").read_text(encoding="utf-8") == "new content"
+    text = (field_path / "plain.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert text.endswith("new content")
 
 
 def test_write_append(cli_runner, connected, monkeypatch):
@@ -246,6 +257,10 @@ def test_write_dry_run_writes_nothing(cli_runner, connected, monkeypatch):
     result = cli_runner.invoke(cli.cli, ["write", "--dry-run", "new.md"], input="hello\n")
     assert result.exit_code == 0
     assert "hello" in result.output
+    assert "uuid:" in result.output
+    assert "created:" in result.output
+    assert "updated:" in result.output
+    assert "title: new" in result.output
     assert not (field_path / "new.md").exists()
     assert spawned == []
 
@@ -282,7 +297,8 @@ def test_write_uuid_preserved(cli_runner, connected, monkeypatch):
     _cfg_path, field_path = connected
     monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
     old_text = (field_path / "alpha.md").read_text(encoding="utf-8")
-    old_uuid = frontmatter.get_frontmatter_field(old_text, "uuid")
+    old_fm, _ = frontmatter.parse_frontmatter(old_text)
+    old_uuid = old_fm["uuid"]
     result = cli_runner.invoke(
         cli.cli,
         ["write", "--force", "alpha.md"],
@@ -290,7 +306,11 @@ def test_write_uuid_preserved(cli_runner, connected, monkeypatch):
     )
     assert result.exit_code == 0
     new_text = (field_path / "alpha.md").read_text(encoding="utf-8")
-    assert frontmatter.get_frontmatter_field(new_text, "uuid") == old_uuid
+    new_fm, _ = frontmatter.parse_frontmatter(new_text)
+    assert new_fm["uuid"] == old_uuid
+    assert new_fm["created"] == old_fm["created"]
+    assert new_fm["updated"] == old_fm["updated"]
+    assert new_fm["title"] == "New"
 
 
 def test_write_touches_no_config(cli_runner, connected, monkeypatch):
@@ -308,6 +328,156 @@ def test_write_spawns_exactly_once(cli_runner, connected, monkeypatch):
     monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", spawned.append)
     cli_runner.invoke(cli.cli, ["write", "new.md"], input="content\n")
     assert spawned == ["notes"]
+
+
+def test_write_title_and_summary_flags(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(
+        cli.cli,
+        ["write", "new.md", "--title", "New Page", "--summary", "About it"],
+        input="body\n",
+    )
+    assert result.exit_code == 0
+    fm, _ = frontmatter.parse_frontmatter((field_path / "new.md").read_text(encoding="utf-8"))
+    assert fm["title"] == "New Page"
+    assert fm["summary"] == "About it"
+
+
+def test_new_creates_slugged_page(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    spawned = []
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", spawned.append)
+    result = cli_runner.invoke(cli.cli, ["new", "Carbon Fibre Woks"], input="body\n")
+    assert result.exit_code == 0
+    page = field_path / "carbon-fibre-woks.md"
+    assert page.is_file()
+    fm, _ = frontmatter.parse_frontmatter(page.read_text(encoding="utf-8"))
+    assert fm["title"] == "Carbon Fibre Woks"
+    assert "uuid" in fm
+    assert "created" in fm
+    assert "updated" in fm
+    assert "summary" not in fm
+    assert page.read_text(encoding="utf-8").endswith("body\n")
+    assert "Created notes/carbon-fibre-woks.md" in result.output
+    assert "uuid:" in result.output
+    assert spawned == ["notes"]
+
+
+def test_new_empty_stdin_uses_skeleton(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["new", "Skeleton Page"])
+    assert result.exit_code == 0
+    text = (field_path / "skeleton-page.md").read_text(encoding="utf-8")
+    assert text.endswith("# Skeleton Page\n\n")
+
+
+def test_new_name_override(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["new", "Custom", "--name", "foo.md"], input="x\n")
+    assert result.exit_code == 0
+    assert (field_path / "foo.md").is_file()
+
+
+def test_new_name_without_md_gets_appended(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["new", "Custom", "--name", "bar"], input="x\n")
+    assert result.exit_code == 0
+    assert (field_path / "bar.md").is_file()
+
+
+def test_new_existing_slug_errors(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    (field_path / "carbon-fibre-woks.md").write_text("existing\n", encoding="utf-8")
+    result = cli_runner.invoke(cli.cli, ["new", "Carbon Fibre Woks"], input="body\n")
+    assert result.exit_code == 1
+    assert "page already exists" in result.output
+
+
+def test_new_unslugable_title_errors(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["new", "!!!"])
+    assert result.exit_code == 1
+    assert "--name" in result.output
+
+
+def test_new_summary_flag(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["new", "Topic", "--summary", "A summary"], input="x\n")
+    assert result.exit_code == 0
+    fm, _ = frontmatter.parse_frontmatter((field_path / "topic.md").read_text(encoding="utf-8"))
+    assert fm["summary"] == "A summary"
+
+
+def test_new_dry_run_writes_nothing(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    spawned = []
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", spawned.append)
+    result = cli_runner.invoke(cli.cli, ["new", "Draft", "--dry-run"], input="draft body\n")
+    assert result.exit_code == 0
+    assert "uuid:" in result.output
+    assert "created:" in result.output
+    assert "title: Draft" in result.output
+    assert "draft body" in result.output
+    assert not (field_path / "draft.md").exists()
+    assert spawned == []
+
+
+def test_new_multi_field_requires_field(cli_runner, config_env, field_dir, tmp_path):
+    field2 = tmp_path / "field2"
+    field2.mkdir()
+    config_env.write_text(
+        f'[memoryfields.notes]\ntransport = "local"\nlocation = "{field_dir}"\n'
+        f'[memoryfields.work]\ntransport = "local"\nlocation = "{field2}"\n',
+        encoding="utf-8",
+    )
+    result = cli_runner.invoke(cli.cli, ["new", "Topic"], input="x\n")
+    assert result.exit_code == 1
+    assert "specify --field" in result.output
+
+
+def test_help_examples_verbatim(cli_runner):
+    result = cli_runner.invoke(cli.cli, ["write", "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.output
+    assert "echo '# New page' | memoryfield-tool write new-page.md" in result.output
+    assert (
+        "echo '# New page' | memoryfield-tool write new-page.md --title 'New Page' "
+        "--summary 'About'" in result.output
+    )
+    assert "memoryfield-tool write --dry-run new-page.md < draft.md" in result.output
+
+
+def test_schema_output(cli_runner):
+    result = cli_runner.invoke(cli.cli, ["--schema"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["tool"] == "memoryfield-tool"
+    assert "version" in data
+    names = {c["name"] for c in data["commands"]}
+    assert {
+        "write",
+        "new",
+        "read",
+        "search",
+        "catalog",
+        "validate",
+        "index",
+        "export",
+        "create",
+        "connect",
+        "serve",
+    } <= names
+    write = next(c for c in data["commands"] if c["name"] == "write")
+    param_names = {p["name"] for p in write["params"]}
+    assert "title" in param_names
+    assert "summary" in param_names
+    catalog = next(c for c in data["commands"] if c["name"] == "catalog")
+    sort_by = next(p for p in catalog["params"] if p["name"] == "sort_by")
+    assert set(sort_by["choices"]) == {"path", "title", "created", "updated"}
 
 
 def test_index_builds(cli_runner, connected, fake_embed):

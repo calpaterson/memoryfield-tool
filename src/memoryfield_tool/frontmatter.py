@@ -52,3 +52,67 @@ def set_frontmatter_field(text: str, field: str, value: object) -> str:
     updated: dict[str, object] = parsed if isinstance(parsed, dict) else {}
     updated[field] = value
     return build_frontmatter(updated) + body
+
+
+def fill_frontmatter(
+    text: str,
+    *,
+    title: str | None = None,
+    summary: str | None = None,
+    uuid: str | None = None,
+    created: str | None = None,
+    updated: str | None = None,
+    preserve: dict[str, object] | None = None,
+    title_fallback: str | None = None,
+) -> str:
+    """Fill missing frontmatter keys, never clobbering present ones.
+
+    Only missing keys are filled, per-key precedence (first match wins):
+      - uuid/created/updated: incoming > stored (preserve) > supplied value
+      - title: incoming > title flag > stored (preserve) > title_fallback
+      - summary: incoming > summary flag > stored (preserve); never inferred
+
+    Malformed or unclosed frontmatter is left byte-untouched. When nothing is
+    missing and no fill values apply, the text is returned unchanged.
+    """
+    fm, has_markers = parse_frontmatter(text)
+    if fm is None and has_markers:
+        return text
+    src = fm if fm is not None else {}
+    _block, body = _split_frontmatter(text)
+    base = preserve if preserve is not None else {}
+
+    fills: dict[str, object] = {}
+    if src.get("uuid") is None:
+        if base.get("uuid") is not None:
+            fills["uuid"] = base["uuid"]
+        elif uuid is not None:
+            fills["uuid"] = uuid
+    if src.get("created") is None:
+        if base.get("created") is not None:
+            fills["created"] = base["created"]
+        elif created is not None:
+            fills["created"] = created
+    if src.get("updated") is None:
+        if base.get("updated") is not None:
+            fills["updated"] = base["updated"]
+        elif updated is not None:
+            fills["updated"] = updated
+    if src.get("title") is None:
+        if title is not None:
+            fills["title"] = title
+        elif base.get("title") is not None:
+            fills["title"] = base["title"]
+        elif title_fallback is not None:
+            fills["title"] = title_fallback
+    if src.get("summary") is None:
+        if summary is not None:
+            fills["summary"] = summary
+        elif base.get("summary") is not None:
+            fills["summary"] = base["summary"]
+
+    if not fills:
+        return text
+    merged = dict(src)
+    merged.update(fills)
+    return build_frontmatter(merged) + body
