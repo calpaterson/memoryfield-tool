@@ -7,6 +7,7 @@ from typing import Any
 
 import boto3
 import click
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 _BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
@@ -154,11 +155,17 @@ class S3Transport(Transport):
         client: object = None,
         endpoint_url: str | None = None,
         region: str | None = None,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
     ) -> None:
         self.bucket = bucket
         self.prefix = prefix
         self.endpoint_url = endpoint_url
         self.region = region
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
+        self.aws_session_token = aws_session_token
         if client is not None:
             self._client: Any = client
         else:
@@ -167,7 +174,18 @@ class S3Transport(Transport):
                 kwargs["endpoint_url"] = endpoint_url
             if region is not None:
                 kwargs["region_name"] = region
-            self._client = boto3.client("s3", **kwargs)
+            if aws_access_key_id is not None:
+                kwargs["aws_access_key_id"] = aws_access_key_id
+            if aws_secret_access_key is not None:
+                kwargs["aws_secret_access_key"] = aws_secret_access_key
+            if aws_session_token is not None:
+                kwargs["aws_session_token"] = aws_session_token
+            self._client = boto3.client(
+                "s3",
+                # the below is required for Google GCS compat
+                config=Config(request_checksum_calculation="when_required"),
+                **kwargs,
+            )
 
     def _full(self, key: str) -> str:
         return f"{self.prefix}/{key}" if self.prefix else key

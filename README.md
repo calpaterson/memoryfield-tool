@@ -57,6 +57,17 @@ memoryfield-tool create cadentia --location s3://cadentia-bucket/cadentia \
 - **AWS** uses the default endpoint, so `--endpoint-url` is optional; credentials
   come from the standard `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and
   `AWS_REGION`) environment variables.
+- Credentials can instead be stored per-field in the config: set
+  `aws_access_key_id`, `aws_secret_access_key` and (optionally)
+  `aws_session_token` for a field via the `connect`/`create` flags
+  `--aws-access-key-id`, `--aws-secret-access-key` and `--aws-session-token`.
+  Configured keys take precedence over the boto3 default credential chain (env
+  vars, `~/.aws/`, IAM roles); keys left unset fall back to that chain.
+  `aws_access_key_id` and `aws_secret_access_key` must be set together (the
+  session token is optional).  Note that `~/.config/memoryfield-tool.toml` is
+  plaintext — when keys are stored there, run
+  `chmod 600 ~/.config/memoryfield-tool.toml` and prefer the env/chain approach
+  in shared or CI environments.
 - **GCS** exposes an S3-compatible API at
   `https://storage.googleapis.com`; create HMAC keys in the GCS console and set
   them in the same `AWS_` environment variables, then pass

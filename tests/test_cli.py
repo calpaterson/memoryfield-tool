@@ -538,3 +538,76 @@ def test_create_s3_existing_index_errors(cli_runner, config_env):
     )
     assert result.exit_code == 1
     assert "already contains" in result.output
+
+
+@mock_aws
+def test_connect_s3_persists_credentials(cli_runner, config_env, monkeypatch):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# hi\n")
+    monkeypatch.setattr(transport.S3Transport, "probe", lambda self: None)
+    monkeypatch.setattr(transport.S3Transport, "list_objects", lambda self, *, recursive=False: [])
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "connect",
+            "cadentia",
+            "s3://cadentia-bucket/cadentia",
+            "--aws-access-key-id",
+            "AKIAEXAMPLE",
+            "--aws-secret-access-key",
+            "secret",
+            "--aws-session-token",
+            "token",
+        ],
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["cadentia"]
+    assert field.aws_access_key_id == "AKIAEXAMPLE"
+    assert field.aws_secret_access_key == "secret"
+    assert field.aws_session_token == "token"
+
+
+@mock_aws
+def test_create_s3_persists_credentials(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "create",
+            "cadentia",
+            "--location",
+            "s3://cadentia-bucket/cadentia",
+            "--aws-access-key-id",
+            "AKIAEXAMPLE",
+            "--aws-secret-access-key",
+            "secret",
+        ],
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["cadentia"]
+    assert field.aws_access_key_id == "AKIAEXAMPLE"
+    assert field.aws_secret_access_key == "secret"
+    assert field.aws_session_token is None
+
+
+@mock_aws
+def test_connect_s3_rejects_partial_credentials(cli_runner, config_env, monkeypatch):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# hi\n")
+    monkeypatch.setattr(transport.S3Transport, "probe", lambda self: None)
+    monkeypatch.setattr(transport.S3Transport, "list_objects", lambda self, *, recursive=False: [])
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "connect",
+            "cadentia",
+            "s3://cadentia-bucket/cadentia",
+            "--aws-secret-access-key",
+            "secret",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "must be set together" in result.output

@@ -189,3 +189,44 @@ def test_local_factory(tmp_path):
     t = transport.local(tmp_path)
     assert isinstance(t, LocalTransport)
     assert t.root == (tmp_path).resolve()
+
+
+def test_s3_transport_forwards_credentials_to_client(monkeypatch):
+    captured = {}
+
+    def capture(*_args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(transport.boto3, "client", capture)
+    S3Transport(
+        "b",
+        "",
+        aws_access_key_id="AKIAEXAMPLE",
+        aws_secret_access_key="secret",
+        aws_session_token="token",
+        endpoint_url="https://x",
+        region="us-east-1",
+    )
+    assert captured["aws_access_key_id"] == "AKIAEXAMPLE"
+    assert captured["aws_secret_access_key"] == "secret"
+    assert captured["aws_session_token"] == "token"
+    assert captured["endpoint_url"] == "https://x"
+    assert captured["region_name"] == "us-east-1"
+    assert captured["config"].request_checksum_calculation == "when_required"
+
+
+def test_s3_transport_omits_credentials_when_none(monkeypatch):
+    captured = {}
+
+    def capture(*_args, **kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(transport.boto3, "client", capture)
+    S3Transport("b", "")
+    assert "aws_access_key_id" not in captured
+    assert "aws_secret_access_key" not in captured
+    assert "aws_session_token" not in captured
+    assert "region_name" not in captured
+    assert captured["config"].request_checksum_calculation == "when_required"

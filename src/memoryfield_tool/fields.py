@@ -55,6 +55,9 @@ def get_transport(field: config.Field) -> transport.Transport:
             prefix,
             endpoint_url=field.endpoint_url,
             region=_region_for(field),
+            aws_access_key_id=field.aws_access_key_id,
+            aws_secret_access_key=field.aws_secret_access_key,
+            aws_session_token=field.aws_session_token,
         )
     raise click.ClickException(
         f"memoryfield {field.name!r} uses unknown transport {field.transport!r}"

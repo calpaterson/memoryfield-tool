@@ -84,6 +84,26 @@ def test_get_transport_s3(config_env):
     assert t.prefix == "cadentia"
 
 
+def test_get_transport_s3_forwards_credentials(config_env):
+    cfg = config.load_config()
+    field = config.add_field(
+        cfg,
+        "notes",
+        "s3://bucket/prefix",
+        transport="s3",
+        aws_access_key_id="AKIAEXAMPLE",
+        aws_secret_access_key="secret",
+        aws_session_token="token",
+    )
+    t = fields.get_transport(field)
+    assert isinstance(t, S3Transport)
+    assert t.bucket == "bucket"
+    assert t.prefix == "prefix"
+    assert t.aws_access_key_id == "AKIAEXAMPLE"
+    assert t.aws_secret_access_key == "secret"
+    assert t.aws_session_token == "token"
+
+
 def test_get_transport_unknown_errors(config_env):
     field = config.Field(name="remote", transport="http", location="https://example.com")
     with pytest.raises(click.ClickException, match="unknown transport"):

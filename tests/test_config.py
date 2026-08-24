@@ -166,3 +166,56 @@ def test_endpoint_url_not_emitted_when_none(config_env):
     text = config_env.read_text(encoding="utf-8")
     assert "endpoint_url" not in text
     assert "region" not in text
+
+
+def test_s3_field_credentials_roundtrip(config_env):
+    cfg = config.load_config()
+    field = config.add_field(
+        cfg,
+        "cadentia",
+        "s3://cadentia-bucket/cadentia",
+        transport="s3",
+        aws_access_key_id="AKIAEXAMPLE",
+        aws_secret_access_key="secret",
+        aws_session_token="token",
+    )
+    cfg = config.with_field(cfg, field)
+    config.save_config(cfg)
+
+    reloaded = config.load_config()
+    assert config.get_field(reloaded, "cadentia") == field
+    assert field.aws_access_key_id == "AKIAEXAMPLE"
+    assert field.aws_secret_access_key == "secret"
+    assert field.aws_session_token == "token"
+
+
+def test_credentials_not_emitted_when_none(config_env):
+    cfg = config.load_config()
+    field = config.add_field(cfg, "notes", "/tmp/notes")
+    config.save_config(config.with_field(cfg, field))
+    text = config_env.read_text(encoding="utf-8")
+    assert "aws_access_key_id" not in text
+    assert "aws_secret_access_key" not in text
+    assert "aws_session_token" not in text
+
+
+def test_legacy_config_without_credentials_loads_none(config_env):
+    config_env.write_text(
+        '[memoryfields.notes]\ntransport = "local"\nlocation = "/tmp/notes"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    field = config.get_field(cfg, "notes")
+    assert field.aws_access_key_id is None
+    assert field.aws_secret_access_key is None
+    assert field.aws_session_token is None
+
+
+def test_partial_credentials_rejected(config_env):
+    cfg = config.load_config()
+    with pytest.raises(click.ClickException, match="must be set together"):
+        config.add_field(cfg, "notes", "/tmp/a", aws_secret_access_key="s")
+    with pytest.raises(click.ClickException, match="must be set together"):
+        config.add_field(cfg, "notes", "/tmp/a", aws_access_key_id="a")
+    with pytest.raises(click.ClickException, match="requires"):
+        config.add_field(cfg, "notes", "/tmp/a", aws_session_token="t")

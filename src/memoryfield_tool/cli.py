@@ -34,7 +34,19 @@ def _resolve_field_location(field_name: str, location: str | None) -> Path:
     help="Directory (or s3://bucket/prefix) to create the field in (default ~/memoryfields/<name>)",
 )
 @click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
-def create(name: str, location: str | None, endpoint_url: str | None) -> None:
+@click.option("--aws-access-key-id", default=None, help="AWS access key ID (s3 fields)")
+@click.option("--aws-secret-access-key", default=None, help="AWS secret access key (s3 fields)")
+@click.option(
+    "--aws-session-token", default=None, help="AWS session token (temporary credentials, s3 fields)"
+)
+def create(
+    name: str,
+    location: str | None,
+    endpoint_url: str | None,
+    aws_access_key_id: str | None,
+    aws_secret_access_key: str | None,
+    aws_session_token: str | None,
+) -> None:
     """Create a new memoryfield with an introductory index page."""
     cfg = config.load_config()
 
@@ -56,7 +68,16 @@ def create(name: str, location: str | None, endpoint_url: str | None) -> None:
 
     if location and location.startswith("s3://"):
         transport.parse_s3_uri(location)
-        field = config.add_field(cfg, name, location, transport="s3", endpoint_url=endpoint_url)
+        field = config.add_field(
+            cfg,
+            name,
+            location,
+            transport="s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+        )
         t = fields.get_transport(field)
         try:
             t.probe()
@@ -94,13 +115,34 @@ def create(name: str, location: str | None, endpoint_url: str | None) -> None:
 @click.argument("location")
 @click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
 @click.option("--region", default=None, help="Region for the S3 endpoint (s3 fields)")
-def connect(name: str, location: str, endpoint_url: str | None, region: str | None) -> None:
+@click.option("--aws-access-key-id", default=None, help="AWS access key ID (s3 fields)")
+@click.option("--aws-secret-access-key", default=None, help="AWS secret access key (s3 fields)")
+@click.option(
+    "--aws-session-token", default=None, help="AWS session token (temporary credentials, s3 fields)"
+)
+def connect(
+    name: str,
+    location: str,
+    endpoint_url: str | None,
+    region: str | None,
+    aws_access_key_id: str | None,
+    aws_secret_access_key: str | None,
+    aws_session_token: str | None,
+) -> None:
     """Connect an existing directory (or s3://bucket/prefix) as a memoryfield."""
     cfg = config.load_config()
     if location.startswith("s3://"):
         transport.parse_s3_uri(location)
         field = config.add_field(
-            cfg, name, location, transport="s3", endpoint_url=endpoint_url, region=region
+            cfg,
+            name,
+            location,
+            transport="s3",
+            endpoint_url=endpoint_url,
+            region=region,
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
         )
         t = fields.get_transport(field)
         try:
