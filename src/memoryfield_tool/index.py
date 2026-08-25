@@ -67,45 +67,54 @@ def build_index(t: Transport, index_loc: Path, progress: bool = True) -> tuple[i
     with _with_lock(index_loc):
         db = _open_index(index_loc)
 
-        disk: dict[str, tuple[str, bytes]] = {}
-        for info in pages.page_infos(t):
-            raw = t.read_object(info.key)
-            disk[info.key] = (_dt_iso(info.last_modified), hashlib.sha256(raw).digest())
+        disk: dict[str, str] = {
+            info.key: _dt_iso(info.last_modified) for info in pages.page_infos(t)
+        }
 
-        cur = db.execute("SELECT filename, sha256_hash FROM pages")
-        indexed: dict[str, bytes] = {row[0]: row[1] for row in cur.fetchall()}
+        cur = db.execute("SELECT filename, last_modified, sha256_hash FROM pages")
+        indexed: dict[str, tuple[str, bytes]] = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
 
         removed = 0
         for filename in list(indexed):
             if filename not in disk:
                 db.execute("DELETE FROM pages WHERE filename = ?", (filename,))
                 removed += 1
+        db.commit()
 
-        to_index = [
-            filename for filename, (_mtime, sha) in disk.items() if indexed.get(filename) != sha
-        ]
+        work: list[tuple[str, str, bytes, bytes]] = []
+        for filename in disk:
+            stored = indexed.get(filename)
+            mtime_iso = disk[filename]
+            if stored is not None and stored[0] == mtime_iso:
+                continue
+            raw = t.read_object(filename)
+            sha = hashlib.sha256(raw).digest()
+            if stored is not None and stored[1] == sha:
+                db.execute(
+                    "UPDATE pages SET last_modified = ? WHERE filename = ?",
+                    (mtime_iso, filename),
+                )
+                db.commit()
+            else:
+                work.append((filename, mtime_iso, raw, sha))
 
         indexed_count = 0
-        if to_index:
-            already_done = len(disk) - len(to_index)
-            for filename in tqdm(
-                to_index,
+        if work:
+            for filename, mtime_iso, raw, sha in tqdm(
+                work,
                 desc="Indexing",
                 unit="files",
-                initial=already_done,
-                total=len(disk),
                 disable=not progress,
             ):
-                raw = t.read_object(filename)
                 fm, _has = frontmatter.parse_frontmatter(raw.decode("utf-8", errors="ignore"))
                 frontmatter_json = json.dumps(fm, default=str)
 
                 result = embed.embed_texts([_embed_input(raw)])
                 if result is None:
+                    db.close()
                     return indexed_count, removed, False
                 [embedding] = result
                 embedding_blob = sqlite_vec.serialize_float32(embedding)
-                mtime_iso, sha = disk[filename]
 
                 db.execute(
                     "INSERT INTO pages "
@@ -116,6 +125,7 @@ def build_index(t: Transport, index_loc: Path, progress: bool = True) -> tuple[i
                     "sha256_hash=excluded.sha256_hash, embedding=excluded.embedding",
                     (filename, frontmatter_json, mtime_iso, sha, embedding_blob),
                 )
+                db.commit()
                 indexed_count += 1
 
         db.commit()

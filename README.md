@@ -31,6 +31,8 @@ create NAME [--location PATH]     Create a new memoryfield (intro index page)
 connect NAME LOCATION             Connect an existing directory (or s3:// URI)
                                   as a memoryfield
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
+fields                        List connected fields (name, transport,
+                                location, and index.md summary)
 validate [--field NAME]           Check a field against the spec
 read [--field NAME] PAGES...      Print pages with line numbers
 edit [--field NAME] PAGE          Open a page in $EDITOR and write it back

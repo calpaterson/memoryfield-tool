@@ -16,15 +16,15 @@ def test_empty_field_error(tmp_path):
     assert any(i.level == "error" and i.message == "field contains no pages" for i in issues)
 
 
-def test_subdir_page_error(field_dir):
+def test_subdir_md_files_not_flagged(field_dir):
     sub = field_dir / "subdir"
     sub.mkdir()
     (sub / "nested.md").write_text("nested\n", encoding="utf-8")
     (sub / "conflict.sync-conflict-2026.md").write_text("nested\n", encoding="utf-8")
     issues = validate.validate_field(transport.local(field_dir))
-    assert any(i.level == "error" and i.filename == "subdir/nested.md" for i in issues)
-    assert any(
-        i.level == "error" and i.filename == "subdir/conflict.sync-conflict-2026.md" for i in issues
+    assert all(
+        i.filename not in ("subdir/nested.md", "subdir/conflict.sync-conflict-2026.md")
+        for i in issues
     )
 
 
@@ -68,13 +68,21 @@ def test_missing_recommended_fields_warning(field_dir):
 
 def test_long_summary_warning(field_dir):
     (field_dir / "summary.md").write_text(
-        "---\ntitle: S\nsummary: " + "y" * 200 + "\n---\n\nbody\n", encoding="utf-8"
+        "---\ntitle: S\nsummary: " + "y" * 1100 + "\n---\n\nbody\n", encoding="utf-8"
     )
     issues = validate.validate_field(transport.local(field_dir))
     assert any(
-        i.level == "warning" and i.filename == "summary.md" and "summary too long" in i.message
+        i.level == "warning" and i.filename == "summary.md" and "max 1000" in i.message
         for i in issues
     )
+
+
+def test_medium_summary_no_warning(field_dir):
+    (field_dir / "summary.md").write_text(
+        "---\ntitle: S\nsummary: " + "y" * 500 + "\n---\n\nbody\n", encoding="utf-8"
+    )
+    issues = validate.validate_field(transport.local(field_dir))
+    assert all("summary too long" not in i.message for i in issues)
 
 
 def test_wrong_named_sqlite3_error(field_dir):

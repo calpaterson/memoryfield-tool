@@ -2,6 +2,7 @@ import subprocess
 import sys
 import time
 
+import pysqlite3 as sqlite3
 import pytest
 from conftest import ollama_available
 
@@ -90,11 +91,16 @@ def test_background_reindex_e2e(cli_runner, config_env, tmp_path, monkeypatch):
     index_path = fields.index_location(field)
     assert index_path == loc / "nomic-embed-text-v1.5.sqlite3"
     deadline = time.time() + 30
-    while time.time() < deadline:
+    indexed = False
+    while time.time() < deadline and not indexed:
         if index_path.is_file():
-            break
-        time.sleep(0.5)
-    assert index_path.is_file(), "background index never appeared"
+            db = sqlite3.connect(str(index_path))
+            names = {r[0] for r in db.execute("SELECT filename FROM pages")}
+            db.close()
+            indexed = "note.md" in names
+        if not indexed:
+            time.sleep(0.5)
+    assert indexed, "background index never indexed note.md"
 
     result = cli_runner.invoke(cli.cli, ["search", "--field", "e2e", "e2e"])
     assert result.exit_code == 0

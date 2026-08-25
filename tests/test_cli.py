@@ -140,6 +140,39 @@ def test_catalog_sort_created(cli_runner, connected):
     assert out.index("alpha.md") < out.index("beta.md")
 
 
+def test_fields_single(cli_runner, connected):
+    _cfg_path, field_path = connected
+    (field_path / "index.md").write_text(
+        "---\nsummary: Field notes\n---\n\n# Notes\n", encoding="utf-8"
+    )
+    result = cli_runner.invoke(cli.cli, ["fields"])
+    assert result.exit_code == 0
+    assert "| Field | Transport | Location | Summary |" in result.output
+    assert "notes" in result.output
+    assert "local" in result.output
+    assert str(field_path) in result.output
+    assert "Field notes" in result.output
+
+
+def test_fields_json(cli_runner, connected):
+    _cfg_path, _field_path = connected
+    result = cli_runner.invoke(cli.cli, ["fields", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert isinstance(data, list)
+    row = data[0]
+    assert row["name"] == "notes"
+    assert "transport" in row
+    assert "location" in row
+    assert "summary" in row
+
+
+def test_fields_no_fields(cli_runner, config_env):
+    result = cli_runner.invoke(cli.cli, ["fields"])
+    assert result.exit_code == 0
+    assert "No memoryfields connected." in result.output
+
+
 def test_read_default_line_numbers(cli_runner, connected):
     _cfg_path, field_path = connected
     (field_path / "note.md").write_text("line1\nline2\nline3\n", encoding="utf-8")
@@ -470,6 +503,7 @@ def test_schema_output(cli_runner):
         "export",
         "create",
         "connect",
+        "fields",
         "serve",
     } <= names
     write = next(c for c in data["commands"] if c["name"] == "write")
@@ -554,13 +588,11 @@ def test_validate_clean_exit_0(cli_runner, connected):
 
 def test_validate_errors_exit_1(cli_runner, connected):
     _cfg_path, field_path = connected
-    sub = field_path / "subdir"
-    sub.mkdir()
-    (sub / "nested.md").write_text("nested", encoding="utf-8")
+    (field_path / "Bad_Name.md").write_text("bad", encoding="utf-8")
     result = cli_runner.invoke(cli.cli, ["validate", "--field", "notes"])
     assert result.exit_code == 1
     assert "1 errors" in result.output
-    assert "subdir/nested.md" in result.output
+    assert "Bad_Name.md" in result.output
 
 
 def test_validate_fix_quotes_unquoted_datetimes(cli_runner, connected):

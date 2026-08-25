@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import time
+from datetime import UTC, datetime
 
 from memoryfield_tool import index, transport
 
@@ -66,6 +69,8 @@ def test_add_modify_delete(field_dir, fake_embed):
     (field_dir / "beta.md").write_text(
         "---\ntitle: Beta 2\n---\n\nmodified body\n", encoding="utf-8"
     )
+    future = time.time() + 100
+    os.utime(field_dir / "beta.md", (future, future))
     (field_dir / "gamma.md").unlink()
 
     indexed, removed, embed_ok = index.build_index(
@@ -173,3 +178,74 @@ def test_delete_page_missing_row_noop(field_dir, fake_embed):
     names = {r[0] for r in db.execute("SELECT filename FROM pages")}
     db.close()
     assert names == {"alpha.md", "beta.md", "gamma.md", "index.md"}
+
+
+def test_partial_build_commits_progress(field_dir, fake_embed, monkeypatch):
+    calls = {"n": 0}
+
+    def failing(texts):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return fake_embed(texts)
+        return None
+
+    monkeypatch.setattr("memoryfield_tool.index.embed.embed_texts", failing)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed, embed_ok) == (2, 0, False)
+
+    db = index._open_index(index.index_path(field_dir))
+    count = db.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
+    db.close()
+    assert count == 2
+
+    monkeypatch.setattr("memoryfield_tool.index.embed.embed_texts", fake_embed)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed, embed_ok) == (2, 0, True)
+
+    db = index._open_index(index.index_path(field_dir))
+    count = db.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
+    db.close()
+    assert count == 4
+
+
+def test_unchanged_rebuild_reads_nothing(field_dir, fake_embed, monkeypatch):
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+
+    def raise_boom(key):
+        raise AssertionError("read_object should not run on an unchanged rebuild")
+
+    monkeypatch.setattr(transport.LocalTransport, "read_object", raise_boom)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed) == (0, 0)
+    assert embed_ok is True
+
+
+def test_mtime_only_change_updates_mtime_no_embed(field_dir, fake_embed, monkeypatch):
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+
+    future = time.time() + 100
+    os.utime(field_dir / "alpha.md", (future, future))
+    calls = {"n": 0}
+
+    def counting(texts):
+        calls["n"] += 1
+        return fake_embed(texts)
+
+    monkeypatch.setattr("memoryfield_tool.index.embed.embed_texts", counting)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed) == (0, 0)
+    assert embed_ok is True
+    assert calls["n"] == 0
+
+    db = index._open_index(index.index_path(field_dir))
+    (lm,) = db.execute("SELECT last_modified FROM pages WHERE filename = 'alpha.md'").fetchone()
+    db.close()
+    assert lm == index._dt_iso(datetime.fromtimestamp(future, tz=UTC))

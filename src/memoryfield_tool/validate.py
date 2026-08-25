@@ -25,8 +25,7 @@ def _is_external_link(url: str) -> bool:
 
 def has_unquoted_datetime(fm: dict[str, object]) -> bool:
     return any(
-        isinstance(fm.get(field), (_date_type, _datetime_type))
-        for field in ("created", "updated")
+        isinstance(fm.get(field), (_date_type, _datetime_type)) for field in ("created", "updated")
     )
 
 
@@ -69,10 +68,6 @@ def validate_field(t: Transport) -> list[Issue]:
 
     if not page_keys:
         issues.append(Issue("error", "", "field contains no pages"))
-
-    for o in t.list_objects(recursive=True):
-        if "/" in o.key and o.key.endswith(".md"):
-            issues.append(Issue("error", o.key, "page inside a subdirectory"))
 
     for key in page_keys:
         if not pages.is_page_filename(key):
@@ -124,12 +119,12 @@ def validate_field(t: Transport) -> list[Issue]:
                     )
 
         summary = (fm or {}).get("summary")
-        if isinstance(summary, str) and len(summary) > 160:
+        if isinstance(summary, str) and len(summary) > 1000:
             issues.append(
                 Issue(
                     "warning",
                     key,
-                    f"summary too long ({len(summary)} chars, max 160)",
+                    f"summary too long ({len(summary)} chars, max 1000)",
                 )
             )
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import click
 
-from . import config, transport
+from . import config, frontmatter, transport
 
 
 def field_root(field: config.Field) -> Path:
@@ -14,6 +14,20 @@ def connected_fields(cfg: config.Config, field_name: str | None) -> list[config.
     if field_name is not None:
         return [config.get_field(cfg, field_name)]
     return [cfg.fields[name] for name in sorted(cfg.fields)]
+
+
+def field_summary(field: config.Field) -> str:
+    """The summary frontmatter from the field's index.md, or ''."""
+    t = get_transport(field)
+    try:
+        text = t.read_object("index.md").decode("utf-8", errors="ignore")
+    except transport.TransportError:
+        return ""
+    fm, _ = frontmatter.parse_frontmatter(text)
+    if fm is None:
+        return ""
+    summary = fm.get("summary")
+    return str(summary) if summary is not None else ""
 
 
 def read_write_field(cfg: config.Config, field_name: str | None) -> config.Field:

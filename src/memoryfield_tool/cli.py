@@ -253,6 +253,49 @@ def connect(
     click.echo(f"Connected memoryfield {name!r} at {dest}")
 
 
+@cli.command(name="fields")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
+def fields_cmd(as_json: bool) -> None:
+    """List connected memoryfields (name, transport, location, and index.md summary).
+
+    Reads each field's index.md for its self-describing summary; a missing or
+    unreadable index.md yields an empty summary.
+
+    Examples:
+
+    \b
+        memoryfield-tool fields
+        memoryfield-tool fields --json
+    """
+    cfg = config.load_config()
+    field_list = fields.connected_fields(cfg, None)
+
+    rows = [
+        {
+            "name": f.name,
+            "transport": f.transport,
+            "location": f.location,
+            "summary": fields.field_summary(f),
+        }
+        for f in field_list
+    ]
+    if as_json:
+        click.echo(json.dumps(rows, indent=2, default=str))
+        return
+
+    if not rows:
+        click.echo("No memoryfields connected.")
+        return
+
+    out = ["| Field | Transport | Location | Summary |", "|---|---|---|---|"]
+    for row in rows:
+        summary = str(row["summary"] or "—")
+        if len(summary) > 160:
+            summary = summary[:157] + "..."
+        out.append(f"| {row['name']} | {row['transport']} | {row['location']} | {summary} |")
+    click.echo("\n".join(out))
+
+
 def _catalog_markdown(rows: list[dict[str, object]], multi_field: bool) -> str:
     if multi_field:
         out = ["| Field | Page | Summary |", "|-------|------|---------|"]
