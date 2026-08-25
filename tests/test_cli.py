@@ -309,7 +309,7 @@ def test_write_uuid_preserved(cli_runner, connected, monkeypatch):
     new_fm, _ = frontmatter.parse_frontmatter(new_text)
     assert new_fm["uuid"] == old_uuid
     assert new_fm["created"] == old_fm["created"]
-    assert new_fm["updated"] == old_fm["updated"]
+    assert new_fm["updated"] != old_fm["updated"]
     assert new_fm["title"] == "New"
 
 
@@ -561,6 +561,34 @@ def test_validate_errors_exit_1(cli_runner, connected):
     assert result.exit_code == 1
     assert "1 errors" in result.output
     assert "subdir/nested.md" in result.output
+
+
+def test_validate_fix_quotes_unquoted_datetimes(cli_runner, connected):
+    _cfg_path, field_path = connected
+    (field_path / "unquoted.md").write_text(
+        "---\n"
+        "title: Unquoted\n"
+        "uuid: 6aa615f0-486f-48a7-a210-ba4f5ff18c8b\n"
+        "created: 2026-03-01\n"
+        "updated: 2026-03-02 14:30:00\n"
+        "---\n\nbody\n",
+        encoding="utf-8",
+    )
+    result = cli_runner.invoke(cli.cli, ["validate", "--field", "notes"])
+    assert result.exit_code == 1
+    assert "must be a quoted string" in result.output
+
+    result = cli_runner.invoke(cli.cli, ["validate", "--fix", "--field", "notes"])
+    assert result.exit_code == 0
+    assert "fixed 1 page(s)" in result.output
+
+    text = (field_path / "unquoted.md").read_text(encoding="utf-8")
+    assert "created: '2026-03-01'" in text
+    assert "updated: '2026-" in text
+
+    result = cli_runner.invoke(cli.cli, ["validate", "--field", "notes"])
+    assert result.exit_code == 0
+    assert "0 errors, 0 warnings" in result.output
 
 
 def test_export_with_output(cli_runner, connected, tmp_path):

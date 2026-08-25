@@ -423,8 +423,8 @@ def write(
 
     Missing frontmatter (uuid, created, updated, title) is filled in; a
     summary is never inferred (pass --summary to set one). On overwrite the
-    stored uuid/created/updated/title are preserved and updated is not
-    refreshed; pass --title to override the title.
+    stored uuid/created/title are preserved and updated is always refreshed
+    to the current time; pass --title to override the title.
 
     Examples:
 
@@ -446,14 +446,15 @@ def write(
         raise click.ClickException("refusing to write an empty page")
 
     if dry_run:
+        now = config.now_iso()
         filled = frontmatter.fill_frontmatter(
             body,
             title=title,
             summary=summary,
             title_fallback=Path(page).stem,
             uuid=str(uuid6()),
-            created=config.now_iso(),
-            updated=config.now_iso(),
+            created=now,
+            updated=now,
         )
         click.echo(filled, nl=False)
         return
@@ -524,14 +525,15 @@ def new(
             body = raw.decode("utf-8")
         except UnicodeDecodeError:
             raise click.ClickException("body is not valid UTF-8") from None
+        now = config.now_iso()
         filled = frontmatter.fill_frontmatter(
             body,
             title=title,
             summary=summary,
             title_fallback=stem,
             uuid=str(uuid6()),
-            created=config.now_iso(),
-            updated=config.now_iso(),
+            created=now,
+            updated=now,
         )
         click.echo(filled, nl=False)
         return
@@ -731,19 +733,45 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
 
 @cli.command(name="validate")
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
-def validate_cmd(field_name: str | None) -> None:
+@click.option(
+    "--fix",
+    "fix",
+    is_flag=True,
+    help="Rewrite pages with unquoted created/updated datetimes",
+)
+def validate_cmd(field_name: str | None, fix: bool) -> None:
     """Validate connected memoryfields against the spec.
 
     Examples:
 
     \b
         memoryfield-tool validate --field notes
+        memoryfield-tool validate --fix --field notes
     """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
     any_error = False
     for field in field_list:
         t = fields.get_transport(field)
+        if fix:
+            fixed = 0
+            for key in sorted(pages_mod.collect_pages(t)):
+                try:
+                    raw = t.read_object(key)
+                except transport.ObjectNotFound:
+                    continue
+                text = raw.decode("utf-8", errors="replace")
+                fm, _ = frontmatter.parse_frontmatter(text)
+                if fm is None or not validate.has_unquoted_datetime(fm):
+                    continue
+                try:
+                    pages_mod.write_page(t, key, raw, force=True)
+                except pages_mod.PageWriteError as e:
+                    click.echo(f"{field.name}/{key}: fix failed: {e}", err=True)
+                    continue
+                fixed += 1
+            if fixed:
+                click.echo(f"{field.name}: fixed {fixed} page(s)", err=True)
         issues = validate.validate_field(t)
         errors = [i for i in issues if i.level == "error"]
         warnings = [i for i in issues if i.level == "warning"]

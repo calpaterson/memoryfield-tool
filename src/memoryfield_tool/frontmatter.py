@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 import yaml
 
 
@@ -30,7 +32,12 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object] | None, bool]:
 
 
 def build_frontmatter(fm: dict[str, object]) -> str:
-    dumped = str(yaml.safe_dump(fm, sort_keys=False))
+    normalized = dict(fm)
+    for field in ("created", "updated"):
+        value = normalized.get(field)
+        if isinstance(value, (date, datetime)):
+            normalized[field] = value.isoformat()
+    dumped = str(yaml.safe_dump(normalized, sort_keys=False))
     return "---\n" + dumped + "---\n"
 
 
@@ -64,6 +71,7 @@ def fill_frontmatter(
     updated: str | None = None,
     preserve: dict[str, object] | None = None,
     title_fallback: str | None = None,
+    refresh_updated: bool = False,
 ) -> str:
     """Fill missing frontmatter keys, never clobbering present ones.
 
@@ -71,6 +79,10 @@ def fill_frontmatter(
       - uuid/created/updated: incoming > stored (preserve) > supplied value
       - title: incoming > title flag > stored (preserve) > title_fallback
       - summary: incoming > summary flag > stored (preserve); never inferred
+
+    When ``refresh_updated`` is True and a non-None ``updated`` is supplied,
+    ``updated`` is overridden unconditionally (incoming > stored > present);
+    ``uuid``/``created``/``title``/``summary`` keep the never-clobber contract.
 
     Malformed or unclosed frontmatter is left byte-untouched. When nothing is
     missing and no fill values apply, the text is returned unchanged.
@@ -93,7 +105,10 @@ def fill_frontmatter(
             fills["created"] = base["created"]
         elif created is not None:
             fills["created"] = created
-    if src.get("updated") is None:
+    if refresh_updated:
+        if updated is not None:
+            fills["updated"] = updated
+    elif src.get("updated") is None:
         if base.get("updated") is not None:
             fills["updated"] = base["updated"]
         elif updated is not None:

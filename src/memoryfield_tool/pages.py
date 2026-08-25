@@ -94,9 +94,52 @@ def write_page(
     if t.exists(filename) and not force and not append:
         raise FileExists(filename)
 
+    if title_fallback is None:
+        title_fallback = filename.removesuffix(".md")
+
     if append:
-        t.write_object(filename, body, append=append)
-        return WriteResult(created=created, bytes_written=len(body))
+        if created:
+            now = config.now_iso()
+            fresh_uuid = str(uuid6())
+            filled = frontmatter.fill_frontmatter(
+                text,
+                title=title,
+                summary=summary,
+                title_fallback=title_fallback,
+                uuid=fresh_uuid,
+                created=now,
+                updated=now,
+            )
+            data = filled.encode("utf-8")
+            t.write_object(filename, data)
+            return WriteResult(created=True, bytes_written=len(data), uuid=fresh_uuid)
+
+        existing_text = t.read_object(filename).decode("utf-8", errors="replace")
+        stored, _has = frontmatter.parse_frontmatter(existing_text)
+        if stored is not None:
+            now = config.now_iso()
+            filled = frontmatter.fill_frontmatter(
+                existing_text,
+                title=title,
+                summary=summary,
+                title_fallback=title_fallback,
+                preserve=stored,
+                uuid=str(uuid6()),
+                created=now,
+                updated=now,
+                refresh_updated=True,
+            )
+            data = filled.encode("utf-8") + body
+            t.write_object(filename, data)
+            preserved_uuid = frontmatter.get_frontmatter_field(filled, "uuid")
+            return WriteResult(
+                created=False,
+                bytes_written=len(data),
+                uuid=preserved_uuid if isinstance(preserved_uuid, str) else None,
+            )
+
+        t.write_object(filename, body, append=True)
+        return WriteResult(created=False, bytes_written=len(body))
 
     old_text: str | None = None
     stored_fm: dict[str, object] = {}
@@ -107,9 +150,7 @@ def write_page(
             stored = {}
         stored_fm = stored
 
-    if title_fallback is None:
-        title_fallback = filename.removesuffix(".md")
-
+    now = config.now_iso()
     filled = frontmatter.fill_frontmatter(
         text,
         title=title,
@@ -117,8 +158,9 @@ def write_page(
         title_fallback=title_fallback,
         preserve=stored_fm,
         uuid=str(uuid6()),
-        created=config.now_iso(),
-        updated=config.now_iso(),
+        created=now,
+        updated=now,
+        refresh_updated=not created,
     )
 
     new_uuid = frontmatter.get_frontmatter_field(filled, "uuid")

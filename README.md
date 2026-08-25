@@ -50,8 +50,10 @@ serve [--port N] [--host H]       Serve all fields over HTTP (spec data
 `write` fills missing frontmatter (`uuid`, `created`, `updated`; `title` from
 the filename stem) — no `uuidgen`, no hand-built YAML.  A summary is never
 inferred; pass `--summary` to set one.  `write --force` preserves the stored
-`uuid`/`created`/`updated`/`title` (rewrites stay byte-idempotent; pass
-`--title` to override) and rejects a conflicting incoming `uuid`.  `new`
+`uuid`/`created`/`title` and refreshes `updated` (pass `--title` to override)
+and rejects a conflicting incoming `uuid`.  `validate --fix` rewrites pages
+whose `created`/`updated` are unquoted datetimes, normalizing them to quoted
+strings and refreshing `updated`.  `new`
 derives the page filename from the title (`--name` overrides) and prints the
 created page + uuid.  `memoryfield-tool --schema` prints the full command
 reference (commands, flags, defaults, choices) as JSON for agents to

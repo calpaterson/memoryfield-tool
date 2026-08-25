@@ -1,3 +1,5 @@
+from datetime import date, datetime
+
 from memoryfield_tool.frontmatter import (
     build_frontmatter,
     fill_frontmatter,
@@ -223,3 +225,32 @@ def test_fill_explicit_generated_used_when_missing():
     assert fm["uuid"] == "gen-uuid"
     assert fm["created"] == "gen-created"
     assert fm["updated"] == "gen-updated"
+
+
+def test_build_frontmatter_normalizes_unquoted_datetimes():
+    text = build_frontmatter(
+        {"created": date(2026, 3, 1), "updated": datetime(2026, 3, 2, 14, 30, 0)}
+    )
+    assert "created: '2026-03-01'" in text
+    assert "updated: '2026-03-02T14:30:00'" in text
+    fm, _ = parse_frontmatter(text)
+    assert type(fm["created"]) is str
+    assert type(fm["updated"]) is str
+    assert fm["created"] == "2026-03-01"
+    assert fm["updated"] == "2026-03-02T14:30:00"
+
+
+def test_fill_refresh_updated_overrides_stored():
+    preserve = {"updated": "stored-updated"}
+    result = fill_frontmatter(
+        "body\n", preserve=preserve, updated="fresh-updated", refresh_updated=True
+    )
+    fm, _ = parse_frontmatter(result)
+    assert fm["updated"] == "fresh-updated"
+
+
+def test_fill_refresh_updated_preserves_created():
+    text = "---\ncreated: present-created\n---\n\nbody\n"
+    result = fill_frontmatter(text, created="fresh-created", refresh_updated=True)
+    fm, _ = parse_frontmatter(result)
+    assert fm["created"] == "present-created"

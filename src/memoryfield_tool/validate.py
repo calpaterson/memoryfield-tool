@@ -23,6 +23,13 @@ def _is_external_link(url: str) -> bool:
     return bool(_URI_SCHEME_RE.match(url)) or url.startswith("//") or url.startswith("#")
 
 
+def has_unquoted_datetime(fm: dict[str, object]) -> bool:
+    return any(
+        isinstance(fm.get(field), (_date_type, _datetime_type))
+        for field in ("created", "updated")
+    )
+
+
 def _is_fence(line: str) -> bool:
     return line.startswith("```")
 

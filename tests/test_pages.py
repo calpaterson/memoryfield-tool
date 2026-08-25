@@ -145,10 +145,15 @@ def test_write_append(field_dir):
     assert (field_dir / "plain.md").read_text(encoding="utf-8") == "first\nsecond\n"
 
 
-def test_write_append_to_new_file_creates(field_dir):
+def test_write_append_to_new_file_creates_frontmatter(field_dir):
     result = write_page(transport.local(field_dir), "fresh.md", b"hello\n", append=True)
     assert result.created is True
-    assert (field_dir / "fresh.md").read_text(encoding="utf-8") == "hello\n"
+    assert result.uuid is not None
+    text = (field_dir / "fresh.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert "uuid" in fm
+    assert fm["created"] == fm["updated"]
+    assert text.endswith("hello\n")
 
 
 def test_write_invalid_filename_rejected(field_dir):
@@ -226,7 +231,7 @@ def test_write_auto_fill_with_flags(field_dir):
     assert fm["summary"] == "A summary."
 
 
-def test_write_force_preserves_stored_metadata(field_dir):
+def test_write_force_refreshes_updated_preserves_created(field_dir):
     old_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
     old_fm, _ = frontmatter.parse_frontmatter(old_text)
     result = write_page(transport.local(field_dir), "alpha.md", b"fresh body\n", force=True)
@@ -235,9 +240,53 @@ def test_write_force_preserves_stored_metadata(field_dir):
     new_fm, _ = frontmatter.parse_frontmatter(new_text)
     assert new_fm["uuid"] == old_fm["uuid"]
     assert new_fm["created"] == old_fm["created"]
-    assert new_fm["updated"] == old_fm["updated"]
+    assert new_fm["updated"] != old_fm["updated"]
+    assert datetime.fromisoformat(new_fm["updated"]) is not None
     assert new_fm["title"] == old_fm["title"]
     assert new_text.endswith("fresh body\n")
+
+
+def test_write_created_equals_updated_on_create(field_dir):
+    result = write_page(transport.local(field_dir), "new.md", b"content\n")
+    assert result.created is True
+    text = (field_dir / "new.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["created"] == fm["updated"]
+
+
+def test_write_append_refreshes_updated_preserves_created(field_dir):
+    old_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
+    old_fm, _ = frontmatter.parse_frontmatter(old_text)
+    result = write_page(transport.local(field_dir), "alpha.md", b"\nappended\n", append=True)
+    assert result.created is False
+    assert result.uuid == old_fm["uuid"]
+    new_text = (field_dir / "alpha.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(new_text)
+    assert fm["uuid"] == old_fm["uuid"]
+    assert fm["created"] == old_fm["created"]
+    assert fm["updated"] != old_fm["updated"]
+    assert new_text.endswith("appended\n")
+
+
+def test_write_append_raw_without_frontmatter_stays_raw(field_dir):
+    (field_dir / "plain.md").write_text("first\n", encoding="utf-8")
+    result = write_page(transport.local(field_dir), "plain.md", b"second\n", append=True)
+    assert result.created is False
+    assert result.uuid is None
+    text = (field_dir / "plain.md").read_text(encoding="utf-8")
+    assert text == "first\nsecond\n"
+    assert "---" not in text
+
+
+def test_write_force_normalizes_unquoted_created(field_dir):
+    (field_dir / "plain.md").write_text(
+        "---\ncreated: 2026-03-01\n---\n\nbody\n", encoding="utf-8"
+    )
+    write_page(transport.local(field_dir), "plain.md", b"new body\n", force=True)
+    text = (field_dir / "plain.md").read_text(encoding="utf-8")
+    assert "created: '2026-03-01'" in text
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["created"] == "2026-03-01"
 
 
 def test_write_force_differing_uuid_conflict(field_dir):
