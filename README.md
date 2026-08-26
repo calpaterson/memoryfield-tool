@@ -39,6 +39,9 @@ edit [--field NAME] PAGE          Open a page in $EDITOR and write it back
 write [--field NAME] PAGE         Write stdin to a page (auto frontmatter;
                                   background reindex)
 delete [--field NAME] PAGE        Delete a page
+path [--field NAME] [PAGE]    Print a field's root path, or a page's full path
+rename [--field NAME] OLD NEW Rename a page (preserves uuid/created, refreshes
+                              updated; background reindex)
 new TITLE [--field NAME] [--name PAGE]   Create a page (generated frontmatter,
                                   slugified filename)
 index [--field NAME]              Build or update the vector index

@@ -296,6 +296,39 @@ def fields_cmd(as_json: bool) -> None:
     click.echo("\n".join(out))
 
 
+@cli.command(name="path")
+@click.argument("page", required=False)
+@click.option("--field", "field_name", default=None, help="Memoryfield to resolve")
+def path_cmd(page: str | None, field_name: str | None) -> None:
+    """Print a field's root path, or the full path to a page.
+
+    For local fields the root is the resolved directory path; for s3 fields
+    it is the s3:// URI. With PAGE, prints that page's path (the page need
+    not exist). Useful for working on a field with plain file tools.
+
+    Examples:
+
+    \b
+        memoryfield-tool path
+        memoryfield-tool path --field notes alpha.md
+    """
+    cfg = config.load_config()
+    field = fields.read_write_field(cfg, field_name)
+    if page is not None:
+        if not pages_mod.is_page_filename(page):
+            raise click.ClickException(
+                f"invalid page filename {page!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
+            )
+        if field.transport == "local":
+            click.echo(str(fields.field_root(field) / page))
+        else:
+            click.echo(f"{field.location.rstrip('/')}/{page}")
+    elif field.transport == "local":
+        click.echo(str(fields.field_root(field)))
+    else:
+        click.echo(field.location)
+
+
 def _catalog_markdown(rows: list[dict[str, object]], multi_field: bool) -> str:
     if multi_field:
         out = ["| Field | Page | Summary |", "|-------|------|---------|"]
@@ -725,6 +758,67 @@ def delete_cmd(page: str, field_name: str | None) -> None:
     index.delete_page(fields.index_location(field), page)
     reindex.spawn_background_index(field.name)
     click.echo(f"Deleted {field.name}/{page}")
+
+
+@cli.command(name="rename")
+@click.argument("old")
+@click.argument("new")
+@click.option("--field", "field_name", default=None, help="Memoryfield to rename in")
+def rename_cmd(old: str, new: str, field_name: str | None) -> None:
+    """Rename a page within a memoryfield.
+
+    Moves the page (local: rewrite + delete; s3: copy + delete), preserving
+    frontmatter (uuid, created, title, summary) and refreshing updated.
+    Drops the old page's vector-index row and spawns a background reindex.
+
+    Examples:
+
+    \b
+        memoryfield-tool rename alpha.md beta.md
+        memoryfield-tool rename --field notes alpha.md beta.md
+    """
+    if not pages_mod.is_page_filename(old):
+        raise click.ClickException(
+            f"invalid source filename {old!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
+        )
+    if not pages_mod.is_page_filename(new):
+        raise click.ClickException(
+            f"invalid destination filename {new!r} "
+            f"(must match {pages_mod.PAGE_FILENAME_RE.pattern})"
+        )
+    if old == new:
+        raise click.ClickException("source and destination are the same page")
+    if old == "index.md":
+        raise click.ClickException("refusing to rename index.md (it introduces the memoryfield)")
+
+    cfg = config.load_config()
+    field = fields.read_write_field(cfg, field_name)
+    t = fields.get_transport(field)
+
+    try:
+        raw = t.read_object(old)
+    except transport.ObjectNotFound:
+        raise click.ClickException(f"page not found: {old}") from None
+    if t.exists(new):
+        raise click.ClickException(f"page already exists: {new}")
+
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise click.ClickException(f"cannot rename {old}: not valid UTF-8") from None
+    fm, _has = frontmatter.parse_frontmatter(text)
+    if fm is not None:
+        raw = frontmatter.set_frontmatter_field(text, "updated", config.now_iso()).encode("utf-8")
+
+    try:
+        pages_mod.write_page(t, new, raw, force=True)
+    except pages_mod.PageWriteError as e:
+        raise click.ClickException(str(e)) from None
+    t.delete_object(old)
+
+    index.delete_page(fields.index_location(field), old)
+    reindex.spawn_background_index(field.name)
+    click.echo(f"Renamed {field.name}/{old} -> {field.name}/{new}")
 
 
 @cli.command(name="index")
