@@ -4,7 +4,7 @@ from pathlib import Path
 import boto3
 from moto import mock_aws
 
-from memoryfield_tool import cli, config, frontmatter, transport
+from memoryfield_tool import cli, config, frontmatter, index, transport
 
 
 def test_create_makes_field(cli_runner, config_env):
@@ -472,6 +472,81 @@ def test_new_multi_field_requires_field(cli_runner, config_env, field_dir, tmp_p
     assert "specify --field" in result.output
 
 
+def test_delete_removes_page(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    (field_path / "plain.md").write_text("plain content\n", encoding="utf-8")
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["delete", "plain.md"])
+    assert result.exit_code == 0
+    assert not (field_path / "plain.md").exists()
+    assert "Deleted notes/plain.md" in result.output
+
+
+def test_delete_spawns_reindex_once(cli_runner, connected, monkeypatch):
+    _cfg_path, _field_path = connected
+    spawned = []
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", spawned.append)
+    cli_runner.invoke(cli.cli, ["delete", "alpha.md"])
+    assert spawned == ["notes"]
+
+
+def test_delete_removes_index_row(cli_runner, connected, fake_embed, monkeypatch):
+    _cfg_path, field_path = connected
+    index.build_index(transport.local(field_path), index.index_path(field_path), progress=False)
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["delete", "beta.md"])
+    assert result.exit_code == 0
+    db = index._open_index(index.index_path(field_path))
+    names = {r[0] for r in db.execute("SELECT filename FROM pages")}
+    db.close()
+    assert "beta.md" not in names
+    assert "alpha.md" in names
+
+
+def test_delete_missing_page_errors(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["delete", "nope.md"])
+    assert result.exit_code == 1
+    assert "page not found" in result.output
+
+
+def test_delete_invalid_filename_rejected(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["delete", "Bad Name.md"])
+    assert result.exit_code == 1
+    assert "invalid page filename" in result.output
+
+
+def test_delete_escape_rejected(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["delete", "../outside.md"])
+    assert result.exit_code == 1
+    assert "invalid page filename" in result.output
+
+
+def test_delete_index_refused(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["delete", "index.md"])
+    assert result.exit_code == 1
+    assert "refusing to delete index.md" in result.output
+
+
+@mock_aws
+def test_delete_s3_removes_object(cli_runner, config_env, monkeypatch):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/index.md", Body=b"# hi\n")
+    conn.put_object(Bucket="cadentia-bucket", Key="cadentia/temp.md", Body=b"# temp\n")
+    monkeypatch.setattr(transport.S3Transport, "probe", lambda self: None)
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    config_env.write_text(
+        '[memoryfields.cadentia]\ntransport = "s3"\nlocation = "s3://cadentia-bucket/cadentia"\n',
+        encoding="utf-8",
+    )
+    result = cli_runner.invoke(cli.cli, ["delete", "--field", "cadentia", "temp.md"])
+    assert result.exit_code == 0
+    assert "Deleted cadentia/temp.md" in result.output
+    keys = [o["Key"] for o in conn.list_objects_v2(Bucket="cadentia-bucket")["Contents"]]
+    assert "cadentia/temp.md" not in keys
+    assert "cadentia/index.md" in keys
+
+
 def test_help_examples_verbatim(cli_runner):
     result = cli_runner.invoke(cli.cli, ["write", "--help"])
     assert result.exit_code == 0
@@ -495,6 +570,7 @@ def test_schema_output(cli_runner):
         "write",
         "new",
         "edit",
+        "delete",
         "read",
         "search",
         "catalog",

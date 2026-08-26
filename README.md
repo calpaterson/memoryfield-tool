@@ -38,6 +38,7 @@ read [--field NAME] PAGES...      Print pages with line numbers
 edit [--field NAME] PAGE          Open a page in $EDITOR and write it back
 write [--field NAME] PAGE         Write stdin to a page (auto frontmatter;
                                   background reindex)
+delete [--field NAME] PAGE        Delete a page
 new TITLE [--field NAME] [--name PAGE]   Create a page (generated frontmatter,
                                   slugified filename)
 index [--field NAME]              Build or update the vector index

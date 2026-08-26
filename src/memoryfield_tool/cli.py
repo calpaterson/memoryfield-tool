@@ -692,6 +692,41 @@ def edit(page: str, field_name: str | None, editor: str | None) -> None:
             Path(tmp_path).unlink(missing_ok=True)
 
 
+@cli.command(name="delete")
+@click.argument("page")
+@click.option("--field", "field_name", default=None, help="Memoryfield to delete from")
+def delete_cmd(page: str, field_name: str | None) -> None:
+    """Delete a page from a memoryfield.
+
+    Removes the page file (local or s3) and its row from the vector index,
+    then spawns a background reindex. Refuses to delete index.md.
+
+    Examples:
+
+    \b
+        memoryfield-tool delete alpha.md
+        memoryfield-tool delete --field notes alpha.md
+    """
+    if not pages_mod.is_page_filename(page):
+        raise click.ClickException(
+            f"invalid page filename {page!r} (must match {pages_mod.PAGE_FILENAME_RE.pattern})"
+        )
+    if page == "index.md":
+        raise click.ClickException("refusing to delete index.md (it introduces the memoryfield)")
+
+    cfg = config.load_config()
+    field = fields.read_write_field(cfg, field_name)
+    t = fields.get_transport(field)
+    try:
+        t.delete_object(page)
+    except transport.ObjectNotFound:
+        raise click.ClickException(f"page not found: {page}") from None
+
+    index.delete_page(fields.index_location(field), page)
+    reindex.spawn_background_index(field.name)
+    click.echo(f"Deleted {field.name}/{page}")
+
+
 @cli.command(name="index")
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
 def index_cmd(field_name: str | None) -> None:
