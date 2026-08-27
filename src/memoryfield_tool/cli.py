@@ -253,6 +253,27 @@ def connect(
     click.echo(f"Connected memoryfield {name!r} at {dest}")
 
 
+@cli.command(name="disconnect")
+@click.argument("name")
+def disconnect_cmd(name: str) -> None:
+    """Remove a memoryfield from the config (does not delete its data).
+
+    Removes the field's entry from the config file only; the field's pages
+    and vector index are left in place. Use this to drop a stale or
+    unreachable field.
+
+    Examples:
+
+    \b
+        memoryfield-tool disconnect notes
+    """
+    cfg = config.load_config()
+    config.get_field(cfg, name)  # raises if not connected
+    cfg = config.remove_field(cfg, name)
+    config.save_config(cfg)
+    click.echo(f"Disconnected memoryfield {name!r}")
+
+
 @cli.command(name="fields")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
 def fields_cmd(as_json: bool) -> None:
@@ -369,8 +390,11 @@ def catalog(field_name: str | None, sort_by: str, as_json: bool) -> None:
 
     rows: list[dict[str, object]] = []
     for field in field_list:
-        t = fields.get_transport(field)
-        rows.extend(catalog_mod.catalog_field(t, field_name=field.name))
+        try:
+            t = fields.get_transport(field)
+            rows.extend(catalog_mod.catalog_field(t, field_name=field.name))
+        except (transport.TransportError, click.ClickException) as e:
+            click.echo(f"error: memoryfield {field.name}: {e}", err=True)
     rows = catalog_mod.catalog_sort(rows, sort_by)
 
     if as_json:
@@ -836,10 +860,11 @@ def index_cmd(field_name: str | None) -> None:
     for field in field_list:
         try:
             t = fields.get_transport(field)
+            t.probe()
             loc = fields.index_location(field)
             indexed, removed, embed_ok = index.build_index(t, loc)
-        except click.ClickException as e:
-            click.echo(f"error: {e.message}", err=True)
+        except (click.ClickException, transport.TransportError) as e:
+            click.echo(f"error: memoryfield {field.name}: {e}", err=True)
             continue
         if not embed_ok:
             click.echo(f"{field.name}: embedding unavailable (is ollama running?)")
@@ -877,7 +902,9 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
 
-    results = search.search_all(field_list, query)
+    results, errors = search.search_all(field_list, query)
+    for name, msg in errors:
+        click.echo(f"error: memoryfield {name}: {msg}", err=True)
     if as_json:
         payload = [
             {
@@ -924,35 +951,38 @@ def validate_cmd(field_name: str | None, fix: bool) -> None:
     field_list = fields.connected_fields(cfg, field_name)
     any_error = False
     for field in field_list:
-        t = fields.get_transport(field)
-        if fix:
-            fixed = 0
-            for key in sorted(pages_mod.collect_pages(t)):
-                try:
-                    raw = t.read_object(key)
-                except transport.ObjectNotFound:
-                    continue
-                text = raw.decode("utf-8", errors="replace")
-                fm, _ = frontmatter.parse_frontmatter(text)
-                if fm is None or not validate.has_unquoted_datetime(fm):
-                    continue
-                try:
-                    pages_mod.write_page(t, key, raw, force=True)
-                except pages_mod.PageWriteError as e:
-                    click.echo(f"{field.name}/{key}: fix failed: {e}", err=True)
-                    continue
-                fixed += 1
-            if fixed:
-                click.echo(f"{field.name}: fixed {fixed} page(s)", err=True)
-        issues = validate.validate_field(t)
-        errors = [i for i in issues if i.level == "error"]
-        warnings = [i for i in issues if i.level == "warning"]
-        for issue in issues:
-            loc = issue.filename or "(field)"
-            click.echo(f"{field.name}/{loc}: {issue.level}: {issue.message}")
-        click.echo(f"{field.name}: {len(errors)} errors, {len(warnings)} warnings")
-        if errors:
-            any_error = True
+        try:
+            t = fields.get_transport(field)
+            if fix:
+                fixed = 0
+                for key in sorted(pages_mod.collect_pages(t)):
+                    try:
+                        raw = t.read_object(key)
+                    except transport.ObjectNotFound:
+                        continue
+                    text = raw.decode("utf-8", errors="replace")
+                    fm, _ = frontmatter.parse_frontmatter(text)
+                    if fm is None or not validate.has_unquoted_datetime(fm):
+                        continue
+                    try:
+                        pages_mod.write_page(t, key, raw, force=True)
+                    except pages_mod.PageWriteError as e:
+                        click.echo(f"{field.name}/{key}: fix failed: {e}", err=True)
+                        continue
+                    fixed += 1
+                if fixed:
+                    click.echo(f"{field.name}: fixed {fixed} page(s)", err=True)
+            issues = validate.validate_field(t)
+            errors = [i for i in issues if i.level == "error"]
+            warnings = [i for i in issues if i.level == "warning"]
+            for issue in issues:
+                loc = issue.filename or "(field)"
+                click.echo(f"{field.name}/{loc}: {issue.level}: {issue.message}")
+            click.echo(f"{field.name}: {len(errors)} errors, {len(warnings)} warnings")
+            if errors:
+                any_error = True
+        except (transport.TransportError, click.ClickException) as e:
+            click.echo(f"error: memoryfield {field.name}: {e}", err=True)
     if any_error:
         sys.exit(1)
 
@@ -976,8 +1006,8 @@ def export_cmd(field_name: str | None, output: str | None) -> None:
         try:
             out = Path(output).expanduser() if output else Path(f"./{field.name}.memoryfield.zip")
             export.export_field(field, out)
-        except click.ClickException as e:
-            click.echo(f"error: {e.message}", err=True)
+        except (click.ClickException, transport.TransportError) as e:
+            click.echo(f"error: memoryfield {field.name}: {e}", err=True)
             continue
         click.echo(f"Wrote {field.name} to {out}", err=True)
 

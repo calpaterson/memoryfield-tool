@@ -64,6 +64,73 @@ def test_connect_bad_name_errors(cli_runner, config_env, field_dir):
     assert "invalid memoryfield name" in result.output
 
 
+def test_disconnect_removes_field(cli_runner, connected):
+    _cfg_path, field_path = connected
+    result = cli_runner.invoke(cli.cli, ["disconnect", "notes"])
+    assert result.exit_code == 0
+    assert "Disconnected memoryfield 'notes'" in result.output
+    assert "notes" not in config.load_config().fields
+    assert field_path.is_dir()
+    assert (field_path / "alpha.md").is_file()
+
+
+def test_disconnect_unknown_field_errors(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["disconnect", "nope"])
+    assert result.exit_code == 1
+    assert "no memoryfield named" in result.output
+
+
+def _dead_field_config(config_env, field_dir, tmp_path):
+    config_env.write_text(
+        f'[memoryfields.notes]\ntransport = "local"\nlocation = "{field_dir}"\n'
+        f'[memoryfields.dead]\ntransport = "local"\nlocation = "{tmp_path / "gone"}"\n',
+        encoding="utf-8",
+    )
+
+
+def test_search_skips_dead_field(cli_runner, config_env, field_dir, tmp_path):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    result = cli_runner.invoke(cli.cli, ["search", "gamma"])
+    assert result.exit_code == 0
+    assert "gamma.md" in result.output
+    assert "error: memoryfield dead:" in result.output
+    assert "not a directory" in result.output
+
+
+def test_catalog_skips_dead_field(cli_runner, config_env, field_dir, tmp_path):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    result = cli_runner.invoke(cli.cli, ["catalog"])
+    assert result.exit_code == 0
+    assert "alpha.md" in result.output
+    assert "error: memoryfield dead:" in result.output
+
+
+def test_validate_skips_dead_field(cli_runner, config_env, field_dir, tmp_path):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    result = cli_runner.invoke(cli.cli, ["validate"])
+    assert result.exit_code == 0
+    assert "notes: 0 errors, 0 warnings" in result.output
+    assert "error: memoryfield dead:" in result.output
+
+
+def test_index_skips_dead_field(cli_runner, config_env, field_dir, tmp_path, fake_embed):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    result = cli_runner.invoke(cli.cli, ["index"])
+    assert result.exit_code == 0
+    assert "notes: indexed 4 files" in result.output
+    assert "error: memoryfield dead:" in result.output
+
+
+def test_export_skips_dead_field(cli_runner, config_env, field_dir, tmp_path):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    out = tmp_path / "notes.memoryfield.zip"
+    result = cli_runner.invoke(cli.cli, ["export", "--output", str(out)])
+    assert result.exit_code == 0
+    assert out.is_file()
+    assert "Wrote notes" in result.output
+    assert "error: memoryfield dead:" in result.output
+
+
 def test_catalog_single_field(cli_runner, connected):
     _cfg_path, _field_path = connected
     result = cli_runner.invoke(cli.cli, ["catalog"])
@@ -738,6 +805,7 @@ def test_schema_output(cli_runner):
         "export",
         "create",
         "connect",
+        "disconnect",
         "fields",
         "serve",
     } <= names

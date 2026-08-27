@@ -200,7 +200,7 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         q = request.args.get("q")
         if not q:
             return Response(status=400)
-        results = search.search_all(field_list, q)
+        results, _errors = search.search_all(field_list, q)
         results.sort(key=lambda t: t[1].distance if t[1].distance is not None else float("inf"))
         payload = [
             {

@@ -111,8 +111,20 @@ def test_search_all_multiple_fields(field_dir, tmp_path):
     f1 = config.Field(name="notes", transport="local", location=str(field_dir))
     f2 = config.Field(name="work", transport="local", location=str(field2))
 
-    results = search.search_all([f1, f2], "gamma")
+    results, errors = search.search_all([f1, f2], "gamma")
     assert [(name, r.filename) for name, r in results] == [("notes", "gamma.md")]
+    assert errors == []
 
-    results2 = search.search_all([f1, f2], "work")
+    results2, errors2 = search.search_all([f1, f2], "work")
     assert [(name, r.filename) for name, r in results2] == [("work", "work.md")]
+    assert errors2 == []
+
+
+def test_search_all_skips_dead_field(field_dir, tmp_path):
+    live = config.Field(name="notes", transport="local", location=str(field_dir))
+    dead = config.Field(name="dead", transport="local", location=str(tmp_path / "gone"))
+    results, errors = search.search_all([live, dead], "gamma")
+    assert [(n, r.filename) for n, r in results] == [("notes", "gamma.md")]
+    assert len(errors) == 1
+    assert errors[0][0] == "dead"
+    assert "not a directory" in errors[0][1]

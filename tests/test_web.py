@@ -192,6 +192,18 @@ def test_field_search_substring_fallback(app, connected):
     assert all(r["score"] is None for r in results)
 
 
+def test_global_search_skips_dead_field(config_env, field_dir, tmp_path):
+    config_env.write_text(
+        f'[memoryfields.notes]\ntransport = "local"\nlocation = "{field_dir}"\n'
+        f'[memoryfields.dead]\ntransport = "local"\nlocation = "{tmp_path / "gone"}"\n',
+        encoding="utf-8",
+    )
+    client = web.create_app(config.load_config()).test_client()
+    resp = client.get("/search?q=gamma")
+    assert resp.status_code == 200
+    assert any(r["filename"] == "gamma.md" for r in resp.get_json()["results"])
+
+
 @mock_aws
 def test_s3_field_serving(config_env):
     conn = boto3.client("s3", region_name="us-east-1")

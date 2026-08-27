@@ -77,10 +77,15 @@ class LocalTransport(Transport):
         return resolved
 
     def list_objects(self, *, recursive: bool = False) -> list[ObjectInfo]:
-        if recursive:
-            paths = [f for f in self.root.rglob("*") if f.is_file()]
-        else:
-            paths = [f for f in self.root.iterdir() if f.is_file()]
+        if not self.root.is_dir():
+            raise TransportError(f"not a directory: {self.root}")
+        try:
+            if recursive:
+                paths = [f for f in self.root.rglob("*") if f.is_file()]
+            else:
+                paths = [f for f in self.root.iterdir() if f.is_file()]
+        except OSError as e:
+            raise TransportError(f"cannot list {self.root}: {e}") from e
         out: list[ObjectInfo] = []
         for f in paths:
             st = f.stat()

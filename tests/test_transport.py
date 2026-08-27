@@ -114,6 +114,14 @@ def test_local_probe_missing_dir(tmp_path):
         t.probe()
 
 
+def test_local_list_objects_missing_dir_raises(tmp_path):
+    t = LocalTransport(tmp_path / "nope")
+    with pytest.raises(TransportError, match="not a directory"):
+        t.list_objects()
+    with pytest.raises(TransportError, match="not a directory"):
+        t.list_objects(recursive=True)
+
+
 @pytest.mark.parametrize(
     ("location", "bucket", "prefix"),
     [

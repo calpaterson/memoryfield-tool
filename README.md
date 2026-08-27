@@ -30,6 +30,8 @@ works without it (search falls back to substring matching).
 create NAME [--location PATH]     Create a new memoryfield (intro index page)
 connect NAME LOCATION             Connect an existing directory (or s3:// URI)
                                   as a memoryfield
+disconnect NAME                Remove a memoryfield from the config (data is
+                                  left in place)
 catalog [--field NAME] [--sort]   List pages with frontmatter metadata
 fields                        List connected fields (name, transport,
                                 location, and index.md title)
@@ -50,6 +52,10 @@ export [--field NAME]             Write the field as a .memoryfield.zip
 serve [--port N] [--host H]       Serve all fields over HTTP (spec data
       [--allow-writes] [--open]     server + HTML renderer)
 ```
+
+Commands that act on multiple fields (search, catalog, validate, index,
+export) skip unreachable fields with an `error: memoryfield <name>` warning on
+stderr instead of aborting; use `disconnect` to drop a stale field.
 
 ### Agent-friendly page creation
 

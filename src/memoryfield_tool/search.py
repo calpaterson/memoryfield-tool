@@ -2,11 +2,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import click
 import pysqlite3 as sqlite3
 import sqlite_vec
 
 from . import config, embed, fields, frontmatter, pages
-from .transport import Transport
+from .transport import Transport, TransportError
 
 RESULT_LIMIT = 20
 
@@ -123,11 +124,22 @@ def search_field(t: Transport, index_loc: Path, query: str) -> list[SearchResult
     return _substring_search(t, query)
 
 
-def search_all(field_list: list[config.Field], query: str) -> list[tuple[str, SearchResult]]:
+def search_all(
+    field_list: list[config.Field], query: str
+) -> tuple[list[tuple[str, SearchResult]], list[tuple[str, str]]]:
+    """Search all fields, skipping unreachable ones.
+
+    Returns (results, errors) where errors is a list of (field_name, message)
+    for fields whose transport failed (dead directory, unreachable bucket).
+    """
     results: list[tuple[str, SearchResult]] = []
+    errors: list[tuple[str, str]] = []
     for field in field_list:
-        t = fields.get_transport(field)
-        loc = fields.index_location(field)
-        for result in search_field(t, loc, query):
-            results.append((field.name, result))
-    return results
+        try:
+            t = fields.get_transport(field)
+            loc = fields.index_location(field)
+            for result in search_field(t, loc, query):
+                results.append((field.name, result))
+        except (TransportError, click.ClickException) as e:
+            errors.append((field.name, str(e)))
+    return results, errors
