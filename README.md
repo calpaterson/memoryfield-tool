@@ -20,7 +20,7 @@ or, from a checkout:
 uv run memoryfield-tool --help
 ```
 
-Requires Python 3.14.  Semantic search needs a local
+Requires Python 3.12+.  Semantic search needs a local
 [ollama](https://ollama.dev) with `nomic-embed-text` pulled; everything else
 works without it (search falls back to substring matching).
 
@@ -63,7 +63,9 @@ stderr instead of aborting; use `disconnect` to drop a stale field.
 the filename stem) — no `uuidgen`, no hand-built YAML.  A summary is never
 inferred; pass `--summary` to set one.  `write --force` preserves the stored
 `uuid`/`created`/`title` and refreshes `updated` (pass `--title` to override)
-and rejects a conflicting incoming `uuid`.  `validate --fix` rewrites pages
+and rejects a conflicting incoming `uuid`.  An existing page whose body is
+exactly the bare `# <title>` skeleton left by `new` is replaced without
+`--force`.  `validate --fix` rewrites pages
 whose `created`/`updated` are unquoted datetimes, normalizing them to quoted
 strings and refreshing `updated`.  `new`
 derives the page filename from the title (`--name` overrides) and prints the

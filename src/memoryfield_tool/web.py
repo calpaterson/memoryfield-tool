@@ -19,14 +19,6 @@ def _json_dumps(payload: object) -> str:
     return json.dumps(payload, default=str)
 
 
-def _page_body(text: str) -> str:
-    if text.startswith("---\n"):
-        end = text.find("\n---\n", 4)
-        if end != -1:
-            return text[end + 5 :]
-    return text
-
-
 def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
     field_list = fields.connected_fields(cfg, None)
     nav_fields = [f.name for f in field_list]
@@ -49,7 +41,7 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
             return None
         text = t.read_object(filename).decode("utf-8")
         fm, _has = frontmatter.parse_frontmatter(text)
-        html = markdown(_page_body(text), extensions=["fenced_code", "tables"])
+        html = markdown(frontmatter.page_body(text), extensions=["fenced_code", "tables"])
         html = MD_LINK_RE.sub(rf'href="/{field.name}/\1\2"', html)
         title = (fm or {}).get("title", Path(filename).stem)
         return render_template_string(

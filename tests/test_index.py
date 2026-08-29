@@ -212,6 +212,15 @@ def test_partial_build_commits_progress(field_dir, fake_embed, monkeypatch):
     assert count == 4
 
 
+def test_lock_lives_in_cache_not_field_root(field_dir, fake_embed, monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+    assert list(field_dir.glob("*.lock")) == []
+    locks = list((cache / "memoryfield-tool" / "locks").glob("*.lock"))
+    assert len(locks) == 1
+
+
 def test_unchanged_rebuild_reads_nothing(field_dir, fake_embed, monkeypatch):
     index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
 

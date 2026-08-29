@@ -100,7 +100,7 @@ def test_local_symlink_escape(tmp_path):
     outside.write_text("secret", encoding="utf-8")
     try:
         (root / "evil.md").symlink_to(outside)
-    except OSError, NotImplementedError:
+    except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported on this platform")
     t = LocalTransport(root)
     with pytest.raises(ContainmentError):

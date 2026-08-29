@@ -61,7 +61,7 @@ def test_raw_symlink_escape_404(app, connected):
     outside.write_text("secret", encoding="utf-8")
     try:
         (field_path / "evil.md").symlink_to(outside)
-    except OSError, NotImplementedError:
+    except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported on this platform")
     assert _get(app.test_client(), "/notes/evil.md").status_code == 404
 

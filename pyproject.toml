@@ -2,7 +2,10 @@
 name = "memoryfield-tool"
 version = "0.1.0"
 description = "CLI tool for reading, writing and exporting memoryfields"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+authors = [{ name = "Cal Paterson", email = "cal@calpaterson.com" }]
+readme = "README.md"
 dependencies = [
     "boto3>=1.35,<2",
     "click~=8.3.0",
@@ -14,11 +17,15 @@ dependencies = [
     "sqlite-vec~=0.1.9",
     "tomli-w~=1.0",
     "tqdm~=4.67",
+    "uuid6>=1.0; python_version < '3.14'",
     "waitress~=3.0",
 ]
 
 [project.scripts]
 memoryfield-tool = "memoryfield_tool.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/calpaterson/memoryfield-tool"
 
 [build-system]
 requires = ["hatchling"]
@@ -48,13 +55,13 @@ addopts = "-q"
 
 [tool.ruff]
 line-length = 100
-target-version = "py314"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B"]
 
 [tool.mypy]
-python_version = "3.14"
+python_version = "3.12"
 files = ["src"]
 strict = true
 ignore_missing_imports = true

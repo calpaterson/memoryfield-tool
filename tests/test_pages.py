@@ -279,9 +279,7 @@ def test_write_append_raw_without_frontmatter_stays_raw(field_dir):
 
 
 def test_write_force_normalizes_unquoted_created(field_dir):
-    (field_dir / "plain.md").write_text(
-        "---\ncreated: 2026-03-01\n---\n\nbody\n", encoding="utf-8"
-    )
+    (field_dir / "plain.md").write_text("---\ncreated: 2026-03-01\n---\n\nbody\n", encoding="utf-8")
     write_page(transport.local(field_dir), "plain.md", b"new body\n", force=True)
     text = (field_dir / "plain.md").read_text(encoding="utf-8")
     assert "created: '2026-03-01'" in text
@@ -305,3 +303,44 @@ def test_write_append_raw_bytes_uuid_none(field_dir):
     assert result.created is False
     assert result.uuid is None
     assert (field_dir / "plain.md").read_text(encoding="utf-8") == "first\nsecond\n"
+
+
+def test_write_replaces_new_skeleton_without_force(field_dir):
+    t = transport.local(field_dir)
+    t.write_object(
+        "skeleton.md",
+        b"---\n"
+        b"title: Skeleton Page\n"
+        b"uuid: 11111111-2222-3333-4444-555555555555\n"
+        b"created: '2026-01-01T00:00:00Z'\n"
+        b"updated: '2026-01-01T00:00:00Z'\n"
+        b"---\n"
+        b"# Skeleton Page\n\n",
+    )
+    result = write_page(t, "skeleton.md", b"real body\n")
+    assert result.created is False
+    text = (field_dir / "skeleton.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["uuid"] == "11111111-2222-3333-4444-555555555555"
+    assert fm["created"] == "2026-01-01T00:00:00Z"
+    assert fm["updated"] != "2026-01-01T00:00:00Z"
+    assert frontmatter.page_body(text) == "real body\n"
+
+
+def test_write_still_refuses_real_content_without_force(field_dir):
+    (field_dir / "real.md").write_text(
+        "---\ntitle: Real\n---\n\n# Real\n\nreal content\n", encoding="utf-8"
+    )
+    with pytest.raises(FileExists):
+        write_page(transport.local(field_dir), "real.md", b"new body\n")
+    assert (field_dir / "real.md").read_text(encoding="utf-8").endswith("real content\n")
+
+
+def test_write_replaces_frontmatterless_skeleton(field_dir):
+    (field_dir / "bare.md").write_text("# bare\n\n", encoding="utf-8")
+    result = write_page(transport.local(field_dir), "bare.md", b"content\n")
+    assert result.created is False
+    text = (field_dir / "bare.md").read_text(encoding="utf-8")
+    fm, _ = frontmatter.parse_frontmatter(text)
+    assert fm["title"] == "bare"
+    assert frontmatter.page_body(text) == "content\n"

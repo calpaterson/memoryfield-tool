@@ -209,9 +209,7 @@ def test_catalog_sort_created(cli_runner, connected):
 
 def test_fields_single(cli_runner, connected):
     _cfg_path, field_path = connected
-    (field_path / "index.md").write_text(
-        "---\ntitle: My Notes\n---\n\n# Notes\n", encoding="utf-8"
-    )
+    (field_path / "index.md").write_text("---\ntitle: My Notes\n---\n\n# Notes\n", encoding="utf-8")
     result = cli_runner.invoke(cli.cli, ["fields"])
     assert result.exit_code == 0
     assert "| Field | Transport | Location | Title |" in result.output
@@ -525,6 +523,20 @@ def test_new_empty_stdin_uses_skeleton(cli_runner, connected, monkeypatch):
     assert text.endswith("# Skeleton Page\n\n")
 
 
+def test_new_then_write_replaces_skeleton(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
+    result = cli_runner.invoke(cli.cli, ["new", "Test Page"])
+    assert result.exit_code == 0
+    result = cli_runner.invoke(cli.cli, ["write", "test-page.md"], input="hello\n")
+    assert result.exit_code == 0
+    text = (field_path / "test-page.md").read_text(encoding="utf-8")
+    assert text.endswith("hello\n")
+    result = cli_runner.invoke(cli.cli, ["read", "test-page.md", "--no-line-numbers"])
+    assert result.exit_code == 0
+    assert "hello" in result.output
+
+
 def test_new_name_override(cli_runner, connected, monkeypatch):
     _cfg_path, field_path = connected
     monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
@@ -669,9 +681,7 @@ def test_delete_s3_removes_object(cli_runner, config_env, monkeypatch):
 def test_rename_moves_page(cli_runner, connected, monkeypatch):
     _cfg_path, field_path = connected
     monkeypatch.setattr("memoryfield_tool.cli.reindex.spawn_background_index", lambda name: None)
-    old_fm, _ = frontmatter.parse_frontmatter(
-        (field_path / "alpha.md").read_text(encoding="utf-8")
-    )
+    old_fm, _ = frontmatter.parse_frontmatter((field_path / "alpha.md").read_text(encoding="utf-8"))
     result = cli_runner.invoke(cli.cli, ["rename", "alpha.md", "renamed.md"])
     assert result.exit_code == 0
     assert not (field_path / "alpha.md").exists()
@@ -816,6 +826,63 @@ def test_schema_output(cli_runner):
     catalog = next(c for c in data["commands"] if c["name"] == "catalog")
     sort_by = next(p for p in catalog["params"] if p["name"] == "sort_by")
     assert set(sort_by["choices"]) == {"path", "title", "created", "updated"}
+
+
+def test_schema_meta_covers_every_command():
+    assert set(cli._COMMAND_META) == set(cli.cli.commands)
+
+
+def test_schema_top_level_contract(cli_runner):
+    result = cli_runner.invoke(cli.cli, ["--schema"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["schema_version"] == 1
+    assert data["env"] == ["MEMORYFIELD_TOOL_CONFIG", "XDG_CACHE_HOME"]
+
+
+def test_schema_positionals_and_intrange(cli_runner):
+    result = cli_runner.invoke(cli.cli, ["--schema"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+
+    new = next(c for c in data["commands"] if c["name"] == "new")
+    assert [p["name"] for p in new["positionals"]] == ["title"]
+
+    read = next(c for c in data["commands"] if c["name"] == "read")
+    pages = next(p for p in read["positionals"] if p["name"] == "pages")
+    assert pages["multiple"] is True
+    offset = next(p for p in read["params"] if p["name"] == "offset")
+    assert offset["min"] == 1
+    assert offset["max"] is None
+
+
+def test_schema_safety_flags_and_outputs(cli_runner):
+    result = cli_runner.invoke(cli.cli, ["--schema"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+
+    for c in data["commands"]:
+        assert c["safety"] in {"read-only", "mutating", "destructive"}
+
+    delete = next(c for c in data["commands"] if c["name"] == "delete")
+    assert delete["safety"] == "destructive"
+
+    write = next(c for c in data["commands"] if c["name"] == "write")
+    assert write["destructive_flags"] == ["--force"]
+    serve = next(c for c in data["commands"] if c["name"] == "serve")
+    assert serve["destructive_flags"] == ["--allow-writes"]
+
+    search = next(c for c in data["commands"] if c["name"] == "search")
+    assert search["outputs"]["json"]["fields"] == ["field", "filename", "summary", "distance"]
+    catalog = next(c for c in data["commands"] if c["name"] == "catalog")
+    assert catalog["outputs"]["json"]["fields"] == [
+        "field",
+        "filename",
+        "title",
+        "summary",
+        "created",
+        "updated",
+    ]
 
 
 def test_index_builds(cli_runner, connected, fake_embed):

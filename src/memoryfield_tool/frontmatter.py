@@ -31,6 +31,11 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object] | None, bool]:
     return result, True
 
 
+def page_body(text: str) -> str:
+    """The body after a leading frontmatter block, or the whole text when there is none."""
+    return _split_frontmatter(text)[1]
+
+
 def build_frontmatter(fm: dict[str, object]) -> str:
     normalized = dict(fm)
     for field in ("created", "updated"):

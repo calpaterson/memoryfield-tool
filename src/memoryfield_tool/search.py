@@ -3,10 +3,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
-import pysqlite3 as sqlite3
 import sqlite_vec
 
 from . import config, embed, fields, frontmatter, pages
+from .db import sqlite3
 from .transport import Transport, TransportError
 
 RESULT_LIMIT = 20

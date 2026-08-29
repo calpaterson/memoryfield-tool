@@ -1,16 +1,17 @@
 import fcntl
 import hashlib
 import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-import pysqlite3 as sqlite3
 import sqlite_vec
 from tqdm import tqdm
 
 from . import embed, frontmatter, pages
+from .db import sqlite3
 from .transport import Transport
 
 SCHEMA = """
@@ -32,9 +33,15 @@ def index_path(root: Path) -> Path:
     return root / index_filename()
 
 
+def _lock_path(index_loc: Path) -> Path:
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    token = hashlib.sha256(str(index_loc.resolve()).encode()).hexdigest()[:16]
+    return cache / "memoryfield-tool" / "locks" / f"{token}.lock"
+
+
 @contextmanager
 def _with_lock(index_loc: Path) -> Iterator[None]:
-    lock_path = index_loc.with_suffix(".sqlite3.lock")
+    lock_path = _lock_path(index_loc)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_fd = lock_path.open("w")
     fcntl.flock(lock_fd, fcntl.LOCK_EX)

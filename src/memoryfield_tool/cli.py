@@ -6,7 +6,6 @@ import sys
 import tempfile
 import webbrowser
 from pathlib import Path
-from uuid import uuid6
 
 import click
 from waitress import serve as waitress_serve
@@ -26,9 +25,52 @@ from . import (
 )
 from . import catalog as catalog_mod
 from . import pages as pages_mod
+from .uuid_compat import uuid6
 
 _SORT_CHOICES = ["path", "title", "created", "updated"]
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+_COMMAND_META: dict[str, dict[str, object]] = {
+    "create": {
+        "safety": "mutating",
+        "env": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"],
+    },
+    "connect": {
+        "safety": "mutating",
+        "env": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION"],
+    },
+    "disconnect": {"safety": "mutating"},
+    "fields": {"safety": "read-only"},
+    "path": {"safety": "read-only"},
+    "catalog": {
+        "safety": "read-only",
+        "outputs": {
+            "json": {
+                "description": "Array of page rows",
+                "fields": ["field", "filename", "title", "summary", "created", "updated"],
+            }
+        },
+    },
+    "read": {"safety": "read-only"},
+    "edit": {"safety": "mutating", "env": ["VISUAL", "EDITOR"]},
+    "write": {"safety": "mutating", "destructive_flags": ["--force"]},
+    "new": {"safety": "mutating"},
+    "delete": {"safety": "destructive"},
+    "rename": {"safety": "mutating"},
+    "index": {"safety": "mutating"},
+    "search": {
+        "safety": "read-only",
+        "outputs": {
+            "json": {
+                "description": "Array of search result rows",
+                "fields": ["field", "filename", "summary", "distance"],
+            }
+        },
+    },
+    "validate": {"safety": "mutating"},
+    "export": {"safety": "mutating"},
+    "serve": {"safety": "mutating", "destructive_flags": ["--allow-writes"]},
+}
 
 
 def _jsonable(value: object) -> object:
@@ -43,7 +85,18 @@ def _dump_schema() -> str:
         cmd = cli.commands[name]
         summary = (cmd.help or "").splitlines()[0] if cmd.help else ""
         params: list[dict[str, object]] = []
+        positionals: list[dict[str, object]] = []
         for p in cmd.params:
+            if isinstance(p, click.Argument):
+                positionals.append(
+                    {
+                        "name": p.name,
+                        "type": type(p.type).__name__,
+                        "required": p.required,
+                        "multiple": p.nargs < 0,
+                    }
+                )
+                continue
             if not isinstance(p, click.Option):
                 continue
             entry: dict[str, object] = {
@@ -57,10 +110,27 @@ def _dump_schema() -> str:
             }
             if isinstance(p.type, click.Choice):
                 entry["choices"] = p.type.choices
+            if isinstance(p.type, click.IntRange):
+                entry["min"] = p.type.min
+                entry["max"] = p.type.max
             params.append(entry)
-        commands.append({"name": name, "summary": summary, "help": cmd.help, "params": params})
+        command_entry: dict[str, object] = {
+            "name": name,
+            "summary": summary,
+            "help": cmd.help,
+            "params": params,
+            "positionals": positionals,
+        }
+        command_entry.update(_COMMAND_META.get(name, {}))
+        commands.append(command_entry)
     return json.dumps(
-        {"tool": "memoryfield-tool", "version": __version__, "commands": commands},
+        {
+            "tool": "memoryfield-tool",
+            "version": __version__,
+            "schema_version": 1,
+            "env": ["MEMORYFIELD_TOOL_CONFIG", "XDG_CACHE_HOME"],
+            "commands": commands,
+        },
         indent=2,
     )
 
@@ -524,7 +594,9 @@ def write(
     Missing frontmatter (uuid, created, updated, title) is filled in; a
     summary is never inferred (pass --summary to set one). On overwrite the
     stored uuid/created/title are preserved and updated is always refreshed
-    to the current time; pass --title to override the title.
+    to the current time; pass --title to override the title. An existing
+    page whose body is exactly the bare `# <title>` skeleton left by `new`
+    is replaced without --force.
 
     Examples:
 

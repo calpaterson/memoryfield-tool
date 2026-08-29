@@ -1,10 +1,10 @@
 import re
 import unicodedata
 from dataclasses import dataclass
-from uuid import uuid6
 
 from . import config, frontmatter
 from .transport import ObjectInfo, Transport
+from .uuid_compat import uuid6
 
 PAGE_FILENAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 
@@ -91,8 +91,20 @@ def write_page(
 
     created = not t.exists(filename)
 
+    old_text: str | None = None
+    stored_fm: dict[str, object] = {}
+    if t.exists(filename):
+        old_text = t.read_object(filename).decode("utf-8", errors="replace")
+        stored, _has = frontmatter.parse_frontmatter(old_text)
+        if stored is None:
+            stored = {}
+        stored_fm = stored
+
     if t.exists(filename) and not force and not append:
-        raise FileExists(filename)
+        assert old_text is not None
+        title = str(stored_fm.get("title") or filename.removesuffix(".md"))
+        if frontmatter.page_body(old_text) != f"# {title}\n\n":
+            raise FileExists(filename)
 
     if title_fallback is None:
         title_fallback = filename.removesuffix(".md")
@@ -140,15 +152,6 @@ def write_page(
 
         t.write_object(filename, body, append=True)
         return WriteResult(created=False, bytes_written=len(body))
-
-    old_text: str | None = None
-    stored_fm: dict[str, object] = {}
-    if t.exists(filename):
-        old_text = t.read_object(filename).decode("utf-8", errors="replace")
-        stored, _has = frontmatter.parse_frontmatter(old_text)
-        if stored is None:
-            stored = {}
-        stored_fm = stored
 
     now = config.now_iso()
     filled = frontmatter.fill_frontmatter(
