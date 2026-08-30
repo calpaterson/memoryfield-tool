@@ -298,9 +298,7 @@ def test_concurrent_builds_succeed(field_dir, fake_embed):
 
     def build():
         try:
-            results.append(
-                index.build_index(transport.local(field_dir), index_loc, progress=False)
-            )
+            results.append(index.build_index(transport.local(field_dir), index_loc, progress=False))
         except Exception as e:
             errors.append(e)
 
