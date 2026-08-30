@@ -1,10 +1,14 @@
 import json
 import os
-import re
+import threading
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from conftest import _fake_embed_texts
 
 from memoryfield_tool import index, transport
+from memoryfield_tool.db import sqlite3
 
 
 def test_full_build(field_dir, fake_embed):
@@ -35,12 +39,13 @@ def test_frontmatter_column_stores_json(field_dir, fake_embed):
     assert parsed["summary"] == "Notes about alpha things."
 
 
-def test_last_modified_stored_as_utc_z(field_dir, fake_embed):
+def test_last_modified_stored_as_utc_iso(field_dir, fake_embed):
     index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
     db = index._open_index(index.index_path(field_dir))
     (lm,) = db.execute("SELECT last_modified FROM pages WHERE filename = 'alpha.md'").fetchone()
     db.close()
-    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", lm)
+    parsed = datetime.fromisoformat(lm)
+    assert parsed.utcoffset() == timedelta(0)
 
 
 def test_rebuild_with_no_changes_reembeds_nothing(field_dir, fake_embed, monkeypatch):
@@ -212,15 +217,6 @@ def test_partial_build_commits_progress(field_dir, fake_embed, monkeypatch):
     assert count == 4
 
 
-def test_lock_lives_in_cache_not_field_root(field_dir, fake_embed, monkeypatch, tmp_path):
-    cache = tmp_path / "cache"
-    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
-    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
-    assert list(field_dir.glob("*.lock")) == []
-    locks = list((cache / "memoryfield-tool" / "locks").glob("*.lock"))
-    assert len(locks) == 1
-
-
 def test_unchanged_rebuild_reads_nothing(field_dir, fake_embed, monkeypatch):
     index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
 
@@ -257,7 +253,7 @@ def test_mtime_only_change_updates_mtime_no_embed(field_dir, fake_embed, monkeyp
     db = index._open_index(index.index_path(field_dir))
     (lm,) = db.execute("SELECT last_modified FROM pages WHERE filename = 'alpha.md'").fetchone()
     db.close()
-    assert lm == index._dt_iso(datetime.fromtimestamp(future, tz=UTC))
+    assert lm == datetime.fromtimestamp(future, tz=UTC).isoformat()
 
 
 def test_open_index_creates_missing_parent_dirs(tmp_path):
@@ -268,3 +264,97 @@ def test_open_index_creates_missing_parent_dirs(tmp_path):
     finally:
         db.close()
     assert loc.is_file()
+
+
+def test_no_db_connection_open_during_embed(field_dir, monkeypatch):
+    real_open = index._open_index
+    connections = []
+
+    def tracking_open(path):
+        conn = real_open(path)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(index, "_open_index", tracking_open)
+
+    def assert_closed(texts):
+        assert connections, "expected at least one DB open before embedding"
+        latest = connections[-1]
+        with pytest.raises(sqlite3.ProgrammingError):
+            latest.execute("SELECT 1")
+        return _fake_embed_texts(texts)
+
+    monkeypatch.setattr("memoryfield_tool.index.embed.embed_texts", assert_closed)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed, embed_ok) == (4, 0, True)
+
+
+def test_concurrent_builds_succeed(field_dir, fake_embed):
+    index_loc = index.index_path(field_dir)
+    results = []
+    errors = []
+
+    def build():
+        try:
+            results.append(
+                index.build_index(transport.local(field_dir), index_loc, progress=False)
+            )
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=build) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors, errors
+    assert len(results) == 2
+    for _indexed, removed, embed_ok in results:
+        assert removed == 0
+        assert embed_ok is True
+
+    db = index._open_index(index_loc)
+    rows = [r[0] for r in db.execute("SELECT filename FROM pages ORDER BY filename").fetchall()]
+    db.close()
+    assert rows == ["alpha.md", "beta.md", "gamma.md", "index.md"]
+
+
+def test_upgrade_from_old_second_precision_index_no_reembed(field_dir, fake_embed, monkeypatch):
+    index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
+
+    db = index._open_index(index.index_path(field_dir))
+    rows = db.execute("SELECT filename, last_modified FROM pages").fetchall()
+    for filename, lm in rows:
+        truncated = datetime.fromisoformat(lm).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.execute(
+            "UPDATE pages SET last_modified = ? WHERE filename = ?",
+            (truncated, filename),
+        )
+    db.commit()
+    db.close()
+
+    calls = {"n": 0}
+
+    def counting(texts):
+        calls["n"] += 1
+        return fake_embed(texts)
+
+    monkeypatch.setattr("memoryfield_tool.index.embed.embed_texts", counting)
+    indexed, removed, embed_ok = index.build_index(
+        transport.local(field_dir), index.index_path(field_dir), progress=False
+    )
+    assert (indexed, removed) == (0, 0)
+    assert embed_ok is True
+    assert calls["n"] == 0
+
+    db = index._open_index(index.index_path(field_dir))
+    rows = db.execute("SELECT filename, last_modified FROM pages").fetchall()
+    db.close()
+    for filename, lm in rows:
+        expected = datetime.fromtimestamp(
+            os.stat(field_dir / filename).st_mtime, tz=UTC
+        ).isoformat()
+        assert lm == expected

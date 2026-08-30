@@ -1,3 +1,4 @@
+import contextlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,7 @@ class SearchResult:
 
 
 def _open_index(path: Path) -> sqlite3.Connection:
-    db = sqlite3.connect(str(path))
+    db = sqlite3.connect(str(path), timeout=5.0)
     db.enable_load_extension(True)
     sqlite_vec.load(db)
     db.enable_load_extension(False)
@@ -48,16 +49,13 @@ def _vector_search(index_loc: Path, query: str) -> list[SearchResult] | None:
     [qvec] = result
     qblob = sqlite_vec.serialize_float32(qvec)
 
-    db = _open_index(index_loc)
-    try:
+    with contextlib.closing(_open_index(index_loc)) as db:
         cur = db.execute(
             "SELECT filename, vec_distance_cosine(embedding, ?) AS distance "
             f"FROM pages ORDER BY distance LIMIT {RESULT_LIMIT}",
             (qblob,),
         )
         rows = cur.fetchall()
-    finally:
-        db.close()
 
     return [
         SearchResult(
@@ -71,11 +69,8 @@ def _vector_search(index_loc: Path, query: str) -> list[SearchResult] | None:
 
 
 def _frontmatter_from_index(index_loc: Path, filename: str) -> dict[str, object] | None:
-    db = _open_index(index_loc)
-    try:
+    with contextlib.closing(_open_index(index_loc)) as db:
         row = db.execute("SELECT frontmatter FROM pages WHERE filename = ?", (filename,)).fetchone()
-    finally:
-        db.close()
     if row is None:
         return None
     try:
@@ -86,11 +81,8 @@ def _frontmatter_from_index(index_loc: Path, filename: str) -> dict[str, object]
 
 
 def _summary_from_index(index_loc: Path, filename: str) -> str:
-    db = _open_index(index_loc)
-    try:
+    with contextlib.closing(_open_index(index_loc)) as db:
         row = db.execute("SELECT frontmatter FROM pages WHERE filename = ?", (filename,)).fetchone()
-    finally:
-        db.close()
     if row is None:
         return ""
     return _summary_from_json(row[0])
