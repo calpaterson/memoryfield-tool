@@ -258,3 +258,13 @@ def test_mtime_only_change_updates_mtime_no_embed(field_dir, fake_embed, monkeyp
     (lm,) = db.execute("SELECT last_modified FROM pages WHERE filename = 'alpha.md'").fetchone()
     db.close()
     assert lm == index._dt_iso(datetime.fromtimestamp(future, tz=UTC))
+
+
+def test_open_index_creates_missing_parent_dirs(tmp_path):
+    loc = tmp_path / "deeply" / "nested" / "index.sqlite3"
+    db = index._open_index(loc)
+    try:
+        assert db.execute("SELECT COUNT(*) FROM pages").fetchone()[0] == 0
+    finally:
+        db.close()
+    assert loc.is_file()

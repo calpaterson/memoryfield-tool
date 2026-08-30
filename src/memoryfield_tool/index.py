@@ -53,6 +53,7 @@ def _with_lock(index_loc: Path) -> Iterator[None]:
 
 
 def _open_index(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(str(path))
     db.enable_load_extension(True)
     sqlite_vec.load(db)

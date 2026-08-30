@@ -26,6 +26,7 @@ def _fake_embed_texts(texts: list[str]) -> list[list[float]]:
 def config_env(tmp_path, monkeypatch):
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setenv("MEMORYFIELD_TOOL_CONFIG", str(cfg_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     return cfg_path
 
 
