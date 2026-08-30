@@ -11,10 +11,16 @@ For the RFC-style specification of the memoryfield format, see
 ## Install
 
 ```sh
+uv tool install memoryfield-tool
+```
+
+or, from a local checkout:
+
+```sh
 uv tool install .
 ```
 
-or, from a checkout:
+or, to run from source:
 
 ```sh
 uv run memoryfield-tool --help
@@ -194,3 +200,23 @@ is not included in exports.  `search` returns the top 20 nearest pages (cosine
 distance shown in the output; no hard distance cutoff).  After each `write`,
 the index is rebuilt in the background (a detached process; its stderr goes to
 `~/.cache/memoryfield-tool/reindex.log`).
+
+## Releasing
+
+The version is derived from git tags (see `version.py`): tagging a clean
+commit `vX.Y.Z` and pushing the tag publishes X.Y.Z to PyPI:
+
+```sh
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The `publish` workflow re-runs the linters, typechecker and tests, builds the
+sdist and wheel, checks them with twine, smoke-tests the wheel in a fresh venv
+(the reported version must equal the tag), and uploads to PyPI via trusted
+publishing (OIDC — no API tokens are stored in GitHub).
+
+Anything other than an exact tag on a clean commit builds with a dev or local
+version suffix, which the workflow rejects — so a dirty or mid-history tree
+can never be published by accident.  PyPI never allows re-uploading an
+existing version: if a release is bad, fix forward and tag a new version.

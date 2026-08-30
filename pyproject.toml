@@ -1,6 +1,6 @@
 [project]
 name = "memoryfield-tool"
-version = "0.1.0"
+dynamic = ["version"]
 description = "CLI tool for reading, writing and exporting memoryfields"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
@@ -30,6 +30,11 @@ Homepage = "https://github.com/calpaterson/memoryfield-tool"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "code"
+path = "version.py"
+expression = "derive_version()"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/memoryfield_tool"]
