@@ -149,7 +149,7 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         if not t.exists(filename):
             return Response("page not found", status=404)
         t.delete_object(filename)
-        index.delete_page(index_locs[f.name], filename)
+        index.delete_page(t, index_locs[f.name], filename)
         return Response(status=204)
 
     @app.route("/<field>/<page>")

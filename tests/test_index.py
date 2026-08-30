@@ -157,7 +157,7 @@ def test_unquoted_datetime_frontmatter_tolerated(field_dir, fake_embed):
 
 def test_delete_page_removes_row(field_dir, fake_embed):
     index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
-    index.delete_page(index.index_path(field_dir), "alpha.md")
+    index.delete_page(transport.local(field_dir), index.index_path(field_dir), "alpha.md")
 
     db = index._open_index(index.index_path(field_dir))
     names = {r[0] for r in db.execute("SELECT filename FROM pages")}
@@ -166,13 +166,13 @@ def test_delete_page_removes_row(field_dir, fake_embed):
 
 
 def test_delete_page_absent_index_noop(field_dir):
-    index.delete_page(index.index_path(field_dir), "alpha.md")
+    index.delete_page(transport.local(field_dir), index.index_path(field_dir), "alpha.md")
     assert not index.index_path(field_dir).exists()
 
 
 def test_delete_page_missing_row_noop(field_dir, fake_embed):
     index.build_index(transport.local(field_dir), index.index_path(field_dir), progress=False)
-    index.delete_page(index.index_path(field_dir), "nope.md")
+    index.delete_page(transport.local(field_dir), index.index_path(field_dir), "nope.md")
 
     db = index._open_index(index.index_path(field_dir))
     names = {r[0] for r in db.execute("SELECT filename FROM pages")}

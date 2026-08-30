@@ -4,7 +4,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import sqlite_vec
@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from . import embed, frontmatter, pages
 from .db import sqlite3
-from .transport import Transport
+from .transport import S3Transport, Transport, TransportError
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS pages (
@@ -62,6 +62,60 @@ def _open_index(path: Path) -> sqlite3.Connection:
     return db
 
 
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+
+
+def pull_index(t: Transport, index_loc: Path) -> None:
+    """Download a fresher shared index from the bucket, when present. No-op for local fields."""
+    if not isinstance(t, S3Transport):
+        return
+    try:
+        remote = t.stat_object(index_filename())
+    except TransportError:
+        return
+    if remote is None:
+        return
+    if index_loc.is_file():
+        local_mtime = datetime.fromtimestamp(index_loc.stat().st_mtime, tz=UTC)
+        if local_mtime >= remote.last_modified:
+            return
+    try:
+        data = t.read_object(index_filename())
+    except TransportError:
+        return
+    _atomic_write(index_loc, data)
+    os.utime(index_loc, (remote.last_modified.timestamp(), remote.last_modified.timestamp()))
+
+
+def push_index(t: Transport, index_loc: Path) -> None:
+    """Upload a modified local index to the bucket. No-op for local fields."""
+    if not isinstance(t, S3Transport):
+        return
+    if not index_loc.is_file():
+        return
+    local_mtime = datetime.fromtimestamp(index_loc.stat().st_mtime, tz=UTC)
+    try:
+        remote = t.stat_object(index_filename())
+    except TransportError:
+        return
+    if remote is not None and local_mtime <= remote.last_modified:
+        return
+    try:
+        t.write_object(index_filename(), index_loc.read_bytes())
+    except TransportError:
+        return
+    try:
+        remote = t.stat_object(index_filename())
+    except TransportError:
+        return
+    if remote is not None:
+        os.utime(index_loc, (remote.last_modified.timestamp(), remote.last_modified.timestamp()))
+
+
 def _dt_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -73,6 +127,7 @@ def _embed_input(content: bytes) -> str:
 
 def build_index(t: Transport, index_loc: Path, progress: bool = True) -> tuple[int, int, bool]:
     with _with_lock(index_loc):
+        pull_index(t, index_loc)
         db = _open_index(index_loc)
 
         disk: dict[str, str] = {
@@ -138,22 +193,27 @@ def build_index(t: Transport, index_loc: Path, progress: bool = True) -> tuple[i
 
         db.commit()
         db.close()
+        if indexed_count or removed:
+            push_index(t, index_loc)
         return indexed_count, removed, True
 
 
-def delete_page(index_loc: Path, filename: str) -> None:
+def delete_page(t: Transport, index_loc: Path, filename: str) -> None:
     """Remove a page's row from the vector index. No-op when the index is absent."""
-    if not index_loc.is_file():
-        return
     with _with_lock(index_loc):
+        pull_index(t, index_loc)
+        if not index_loc.is_file():
+            return
         db = _open_index(index_loc)
         db.execute("DELETE FROM pages WHERE filename = ?", (filename,))
         db.commit()
         db.close()
+        push_index(t, index_loc)
 
 
 def reindex_page(t: Transport, index_loc: Path, filename: str) -> None:
     with _with_lock(index_loc):
+        pull_index(t, index_loc)
         db = _open_index(index_loc)
         info = t.stat_object(filename)
         if info is None:
@@ -182,3 +242,4 @@ def reindex_page(t: Transport, index_loc: Path, filename: str) -> None:
         )
         db.commit()
         db.close()
+        push_index(t, index_loc)

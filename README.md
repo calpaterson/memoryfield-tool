@@ -194,12 +194,20 @@ when set (legacy configs stay byte-compatible).
 Local fields index to `<field>/nomic-embed-text-v1.5.sqlite3` inside the field;
 s3 fields index to `~/.cache/memoryfield-tool/indexes/<field>.sqlite3` on the
 local machine.  Both use the spec's `pages` schema.  Indexes are derived data
-and can be regenerated with `index` at any time — the cache-dir index is
-machine-local, so it is not shared across machines (run `index` on each one) and
-is not included in exports.  `search` returns the top 20 nearest pages (cosine
-distance shown in the output; no hard distance cutoff).  After each `write`,
-the index is rebuilt in the background (a detached process; its stderr goes to
-`~/.cache/memoryfield-tool/reindex.log`).
+and can be regenerated with `index` at any time.
+
+For s3 fields the index is also stored in the bucket at
+`<prefix>/nomic-embed-text-v1.5.sqlite3`, so multiple machines share one index.
+The local cache-dir copy is the working copy: a fresher copy is downloaded from
+the bucket before reads/searches and the local copy is uploaded after it changes
+(last write wins by modification time; best-effort — an unreachable bucket
+leaves the local cache in use).  `search` returns the top 20 nearest pages
+(cosine distance shown in the output; no hard distance cutoff).  After each
+`write`, the index is rebuilt in the background (a detached process; its stderr
+goes to `~/.cache/memoryfield-tool/reindex.log`).
+
+Note: exporting an s3 field now includes the shared index object, matching
+local fields, where the index already sits inside the field root.
 
 ## Releasing
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import click
 import sqlite_vec
 
-from . import config, embed, fields, frontmatter, pages
+from . import config, embed, fields, frontmatter, index, pages
 from .db import sqlite3
 from .transport import Transport, TransportError
 
@@ -118,6 +118,7 @@ def _substring_search(t: Transport, query: str) -> list[SearchResult]:
 
 
 def search_field(t: Transport, index_loc: Path, query: str) -> list[SearchResult]:
+    index.pull_index(t, index_loc)
     vector = _vector_search(index_loc, query)
     if vector:
         return vector

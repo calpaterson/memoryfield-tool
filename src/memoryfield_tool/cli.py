@@ -851,7 +851,7 @@ def delete_cmd(page: str, field_name: str | None) -> None:
     except transport.ObjectNotFound:
         raise click.ClickException(f"page not found: {page}") from None
 
-    index.delete_page(fields.index_location(field), page)
+    index.delete_page(t, fields.index_location(field), page)
     reindex.spawn_background_index(field.name)
     click.echo(f"Deleted {field.name}/{page}")
 
@@ -912,7 +912,7 @@ def rename_cmd(old: str, new: str, field_name: str | None) -> None:
         raise click.ClickException(str(e)) from None
     t.delete_object(old)
 
-    index.delete_page(fields.index_location(field), old)
+    index.delete_page(t, fields.index_location(field), old)
     reindex.spawn_background_index(field.name)
     click.echo(f"Renamed {field.name}/{old} -> {field.name}/{new}")
 
