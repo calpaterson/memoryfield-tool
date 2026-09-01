@@ -1,11 +1,13 @@
 import os
 import re
+import shutil
 import tomllib
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import click
+import platformdirs
 import tomli_w
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -21,6 +23,7 @@ class Field:
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_session_token: str | None = None
+    index_location: str | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,10 @@ def config_path() -> Path:
     env = os.environ.get("MEMORYFIELD_TOOL_CONFIG")
     if env:
         return Path(env)
+    return Path(platformdirs.user_config_dir("memoryfield-tool", appauthor=False)) / "config.toml"
+
+
+def _legacy_config_path() -> Path:
     return Path("~/.config/memoryfield-tool.toml").expanduser()
 
 
@@ -43,7 +50,13 @@ def now_iso() -> str:
 def load_config() -> Config:
     path = config_path()
     if not path.is_file():
-        return Config(fields={}, path=path)
+        legacy = _legacy_config_path()
+        if os.environ.get("MEMORYFIELD_TOOL_CONFIG") is None and legacy.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(legacy, path)
+            click.echo(f"migrated config {legacy} -> {path}", err=True)
+        else:
+            return Config(fields={}, path=path)
     try:
         data = tomllib.loads(path.read_text("utf-8"))
     except tomllib.TOMLDecodeError as e:
@@ -64,6 +77,7 @@ def load_config() -> Config:
                 aws_access_key_id=raw.get("aws_access_key_id"),
                 aws_secret_access_key=raw.get("aws_secret_access_key"),
                 aws_session_token=raw.get("aws_session_token"),
+                index_location=raw.get("index_location"),
             )
     return Config(fields=fields, path=path)
 
@@ -86,6 +100,8 @@ def save_config(cfg: Config) -> None:
             entry["aws_secret_access_key"] = field.aws_secret_access_key
         if field.aws_session_token is not None:
             entry["aws_session_token"] = field.aws_session_token
+        if field.index_location is not None:
+            entry["index_location"] = field.index_location
         memoryfields[name] = entry
     payload: dict[str, object] = {"memoryfields": memoryfields}
 
@@ -106,6 +122,7 @@ def add_field(
     aws_access_key_id: str | None = None,
     aws_secret_access_key: str | None = None,
     aws_session_token: str | None = None,
+    index_location: str | None = None,
 ) -> Field:
     if not NAME_RE.match(name):
         raise click.ClickException(f"invalid memoryfield name {name!r}")
@@ -119,6 +136,8 @@ def add_field(
         raise click.ClickException(
             "aws_session_token requires aws_access_key_id and aws_secret_access_key"
         )
+    if transport == "s3" and index_location == "in-field":
+        raise click.ClickException("--index-location in-field is only valid for local fields")
     return Field(
         name=name,
         transport=transport,
@@ -128,6 +147,7 @@ def add_field(
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
         aws_session_token=aws_session_token,
+        index_location=index_location,
     )
 
 

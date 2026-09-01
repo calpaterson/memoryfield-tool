@@ -65,8 +65,48 @@ def test_index_location_local(field_dir, config_env):
 def test_index_location_s3_cache(tmp_path, config_env, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     field = config.Field(name="notes", transport="s3", location="s3://bucket/prefix")
-    expected = tmp_path / "cache" / "memoryfield-tool" / "indexes" / "notes.sqlite3"
+    expected = (
+        tmp_path / "cache" / "memoryfield-tool" / "indexes" / "notes" / index.index_filename()
+    )
     assert fields.index_location(field) == expected
+
+
+def test_index_location_local_cache_key(tmp_path, config_env, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    field = config.Field(
+        name="notes", transport="local", location="/tmp/notes", index_location="cache"
+    )
+    expected = (
+        tmp_path / "cache" / "memoryfield-tool" / "indexes" / "notes" / index.index_filename()
+    )
+    assert fields.index_location(field) == expected
+
+
+def test_index_location_local_explicit_dir(tmp_path, config_env):
+    base = tmp_path / "idx"
+    field = config.Field(
+        name="notes", transport="local", location="/tmp/notes", index_location=str(base)
+    )
+    assert fields.index_location(field) == base / "notes" / index.index_filename()
+
+
+def test_index_location_s3_explicit_dir(tmp_path, config_env):
+    base = tmp_path / "idx"
+    field = config.Field(
+        name="cadentia", transport="s3", location="s3://bucket/prefix", index_location=str(base)
+    )
+    assert fields.index_location(field) == base / "cadentia" / index.index_filename()
+
+
+def test_index_location_s3_in_field_errors(tmp_path, config_env):
+    field = config.Field(
+        name="cadentia",
+        transport="s3",
+        location="s3://bucket/prefix",
+        index_location="in-field",
+    )
+    with pytest.raises(click.ClickException, match="in-field"):
+        fields.index_location(field)
 
 
 def test_get_transport_local(field_dir, config_env):

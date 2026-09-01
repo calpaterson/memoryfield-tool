@@ -1,7 +1,7 @@
-import os
 from pathlib import Path
 
 import click
+import platformdirs
 
 from . import config, frontmatter, transport
 
@@ -40,14 +40,29 @@ def read_write_field(cfg: config.Config, field_name: str | None) -> config.Field
     raise click.ClickException("multiple memoryfields connected — specify --field")
 
 
-def index_location(field: config.Field) -> Path:
-    """Where the vector index sqlite file lives: in-field for local, cache for s3."""
-    if field.transport == "local":
-        from . import index
+def cache_root() -> Path:
+    """This tool's cache directory (XDG_CACHE_HOME-aware via platformdirs)."""
+    return Path(platformdirs.user_cache_dir("memoryfield-tool", appauthor=False))
 
+
+def index_location(field: config.Field) -> Path:
+    """Where the field's vector index sqlite file lives."""
+    from . import index
+
+    key = field.index_location
+    if key == "in-field":
+        if field.transport != "local":
+            raise click.ClickException(
+                f"memoryfield {field.name!r}: s3 fields cannot store the index in-field"
+            )
         return field_root(field) / index.index_filename()
-    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return cache / "memoryfield-tool" / "indexes" / f"{field.name}.sqlite3"
+    if key is None and field.transport == "local":
+        return field_root(field) / index.index_filename()
+    if key is None or key == "cache":
+        base = cache_root() / "indexes"
+    else:
+        base = Path(key).expanduser()
+    return base / field.name / index.index_filename()
 
 
 def _region_for(field: config.Field) -> str | None:

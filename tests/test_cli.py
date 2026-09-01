@@ -20,6 +20,126 @@ def test_create_makes_field(cli_runner, config_env):
     assert str(loc) in result.output
 
 
+def test_create_default_no_index_location_key(cli_runner, config_env):
+    loc = config_env.parent / "demo"
+    result = cli_runner.invoke(cli.cli, ["create", "demo", "--location", str(loc)])
+    assert result.exit_code == 0
+    field = config.load_config().fields["demo"]
+    assert field.index_location is None
+    assert "index_location" not in config_env.read_text(encoding="utf-8")
+    assert f"  index: {loc / index.index_filename()}" in result.output
+
+
+def test_create_index_location_cache_persists(cli_runner, config_env):
+    loc = config_env.parent / "demo"
+    result = cli_runner.invoke(
+        cli.cli, ["create", "demo", "--location", str(loc), "--index-location", "cache"]
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["demo"]
+    assert field.index_location == "cache"
+    text = config_env.read_text(encoding="utf-8")
+    assert 'index_location = "cache"' in text
+    expected = (
+        Path(config_env.parent) / "cache" / "memoryfield-tool" / "indexes" / "demo"
+    ) / index.index_filename()
+    assert f"  index: {expected}" in result.output
+
+
+def test_create_index_location_path_resolved(cli_runner, config_env, tmp_path):
+    loc = config_env.parent / "demo"
+    idx = tmp_path / "idx"
+    result = cli_runner.invoke(
+        cli.cli, ["create", "demo", "--location", str(loc), "--index-location", str(idx)]
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["demo"]
+    assert field.index_location == str(idx.resolve())
+    assert f"  index: {idx.resolve() / 'demo' / index.index_filename()}" in result.output
+
+
+@mock_aws
+def test_create_s3_index_location_in_field_rejected(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "create",
+            "cadentia",
+            "--location",
+            "s3://cadentia-bucket/cadentia",
+            "--index-location",
+            "in-field",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "in-field" in result.output
+
+
+@mock_aws
+def test_create_s3_index_location_cache_ok(cli_runner, config_env):
+    conn = boto3.client("s3", region_name="us-east-1")
+    conn.create_bucket(Bucket="cadentia-bucket")
+    result = cli_runner.invoke(
+        cli.cli,
+        [
+            "create",
+            "cadentia",
+            "--location",
+            "s3://cadentia-bucket/cadentia",
+            "--index-location",
+            "cache",
+        ],
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["cadentia"]
+    assert field.index_location == "cache"
+
+
+def test_connect_index_location_persists(cli_runner, config_env, field_dir):
+    idx = config_env.parent / "idx"
+    result = cli_runner.invoke(
+        cli.cli, ["connect", "notes", str(field_dir), "--index-location", str(idx)]
+    )
+    assert result.exit_code == 0
+    field = config.load_config().fields["notes"]
+    assert field.index_location == str(idx.resolve())
+    text = config_env.read_text(encoding="utf-8")
+    assert f'index_location = "{idx.resolve()}"' in text
+    expected = idx.resolve() / "notes" / index.index_filename()
+    assert f"  index: {expected}" in result.output
+
+
+def test_outside_index_e2e(cli_runner, config_env, fake_embed):
+    loc = config_env.parent / "demo"
+    result = cli_runner.invoke(
+        cli.cli, ["create", "demo", "--location", str(loc), "--index-location", "cache"]
+    )
+    assert result.exit_code == 0
+    result = cli_runner.invoke(
+        cli.cli, ["write", "--field", "demo", "page.md"], input="hello world\n"
+    )
+    assert result.exit_code == 0
+    result = cli_runner.invoke(cli.cli, ["index", "--field", "demo"])
+    assert result.exit_code == 0
+
+    cache_path = (
+        Path(config_env.parent)
+        / "cache"
+        / "memoryfield-tool"
+        / "indexes"
+        / "demo"
+        / index.index_filename()
+    )
+    assert cache_path.is_file()
+    assert not (loc / index.index_filename()).exists()
+
+    result = cli_runner.invoke(cli.cli, ["search", "--field", "demo", "hello"])
+    assert result.exit_code == 0
+    assert "page.md" in result.output
+
+
 def test_create_existing_dir_errors(cli_runner, config_env):
     loc = config_env.parent / "demo"
     loc.mkdir()

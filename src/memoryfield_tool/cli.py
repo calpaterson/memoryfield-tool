@@ -166,12 +166,30 @@ def _resolve_field_location(field_name: str, location: str | None) -> Path:
     return Path("~/memoryfields").expanduser() / field_name
 
 
+def _parse_index_location(value: str | None, *, transport: str) -> str | None:
+    if value is None:
+        return None
+    if value == "in-field":
+        if transport != "local":
+            raise click.ClickException("--index-location in-field is only valid for local fields")
+        return "in-field"
+    if value == "cache":
+        return "cache"
+    return str(Path(value).expanduser().resolve())
+
+
 @cli.command()
 @click.argument("name")
 @click.option(
     "--location",
     default=None,
     help="Directory (or s3://bucket/prefix) to create the field in (default ~/memoryfields/<name>)",
+)
+@click.option(
+    "--index-location",
+    default=None,
+    help="Where the vector index lives: 'cache' (platformdirs), 'in-field' "
+    "(default for local), or a directory path",
 )
 @click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
 @click.option("--aws-access-key-id", default=None, help="AWS access key ID (s3 fields)")
@@ -182,6 +200,7 @@ def _resolve_field_location(field_name: str, location: str | None) -> Path:
 def create(
     name: str,
     location: str | None,
+    index_location: str | None,
     endpoint_url: str | None,
     aws_access_key_id: str | None,
     aws_secret_access_key: str | None,
@@ -224,6 +243,7 @@ def create(
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
+            index_location=_parse_index_location(index_location, transport="s3"),
         )
         t = fields.get_transport(field)
         try:
@@ -238,6 +258,7 @@ def create(
         cfg = config.with_field(cfg, field)
         config.save_config(cfg)
         click.echo(f"Created memoryfield {name!r} at {location}")
+        click.echo(f"  index: {fields.index_location(field)}")
         click.echo(f"  {location}/index.md")
         return
 
@@ -245,7 +266,12 @@ def create(
     if dest.exists():
         raise click.ClickException(f"directory already exists: {dest}")
 
-    field = config.add_field(cfg, name, str(dest.resolve()))
+    field = config.add_field(
+        cfg,
+        name,
+        str(dest.resolve()),
+        index_location=_parse_index_location(index_location, transport="local"),
+    )
     dest.mkdir(parents=True)
 
     (dest / "index.md").write_text(index_body, encoding="utf-8")
@@ -254,6 +280,7 @@ def create(
     config.save_config(cfg)
 
     click.echo(f"Created memoryfield {name!r} at {dest}")
+    click.echo(f"  index: {fields.index_location(field)}")
     click.echo(f"  {dest / 'index.md'}")
 
 
@@ -262,6 +289,12 @@ def create(
 @click.argument("location")
 @click.option("--endpoint-url", default=None, help="S3-compatible endpoint URL (s3 fields)")
 @click.option("--region", default=None, help="Region for the S3 endpoint (s3 fields)")
+@click.option(
+    "--index-location",
+    default=None,
+    help="Where the vector index lives: 'cache' (platformdirs), 'in-field' "
+    "(default for local), or a directory path",
+)
 @click.option("--aws-access-key-id", default=None, help="AWS access key ID (s3 fields)")
 @click.option("--aws-secret-access-key", default=None, help="AWS secret access key (s3 fields)")
 @click.option(
@@ -272,6 +305,7 @@ def connect(
     location: str,
     endpoint_url: str | None,
     region: str | None,
+    index_location: str | None,
     aws_access_key_id: str | None,
     aws_secret_access_key: str | None,
     aws_session_token: str | None,
@@ -297,6 +331,7 @@ def connect(
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token,
+            index_location=_parse_index_location(index_location, transport="s3"),
         )
         t = fields.get_transport(field)
         try:
@@ -309,19 +344,26 @@ def connect(
         if not pages_mod.collect_pages(t):
             click.echo(f"warning: {location} contains no pages (will fail validation)", err=True)
         click.echo(f"Connected memoryfield {name!r} at {location}")
+        click.echo(f"  index: {fields.index_location(field)}")
         return
 
     dest = Path(location).expanduser().resolve()
     if not dest.is_dir():
         raise click.ClickException(f"not a directory: {dest}")
 
-    field = config.add_field(cfg, name, str(dest))
+    field = config.add_field(
+        cfg,
+        name,
+        str(dest),
+        index_location=_parse_index_location(index_location, transport="local"),
+    )
     cfg = config.with_field(cfg, field)
     config.save_config(cfg)
 
     if not pages_mod.collect_pages(transport.local(dest)):
         click.echo(f"warning: {dest} contains no pages (will fail validation)", err=True)
     click.echo(f"Connected memoryfield {name!r} at {dest}")
+    click.echo(f"  index: {fields.index_location(field)}")
 
 
 @cli.command(name="disconnect")

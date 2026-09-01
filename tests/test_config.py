@@ -1,14 +1,55 @@
 from pathlib import Path
 
 import click
+import platformdirs
 import pytest
 
 from memoryfield_tool import config
 
 
-def test_default_path(monkeypatch):
+def test_default_config_path_is_platformdirs(monkeypatch, tmp_path):
     monkeypatch.delenv("MEMORYFIELD_TOOL_CONFIG", raising=False)
-    assert config.config_path() == Path("~/.config/memoryfield-tool.toml").expanduser()
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert (
+        config.config_path()
+        == Path(platformdirs.user_config_dir("memoryfield-tool", appauthor=False)) / "config.toml"
+    )
+
+
+def test_migrates_legacy_config(monkeypatch, tmp_path):
+    monkeypatch.delenv("MEMORYFIELD_TOOL_CONFIG", raising=False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    legacy = Path("~/.config/memoryfield-tool.toml").expanduser()
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        '[memoryfields.notes]\ntransport = "local"\nlocation = "/tmp/notes"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    new_path = config.config_path()
+    assert new_path != legacy
+    assert new_path.is_file()
+    assert config.get_field(cfg, "notes").location == "/tmp/notes"
+
+
+def test_env_override_skips_migration(monkeypatch, tmp_path, capsys):
+    cfg_path = tmp_path / "config.toml"
+    monkeypatch.setenv("MEMORYFIELD_TOOL_CONFIG", str(cfg_path))
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    legacy = Path("~/.config/memoryfield-tool.toml").expanduser()
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        '[memoryfields.notes]\ntransport = "local"\nlocation = "/tmp/notes"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    assert cfg.fields == {}
+    assert cfg.path == cfg_path
+    assert not Path(platformdirs.user_config_dir("memoryfield-tool", appauthor=False)).exists()
+    assert "migrated config" not in capsys.readouterr().err
 
 
 def test_env_override(config_env):
@@ -219,3 +260,40 @@ def test_partial_credentials_rejected(config_env):
         config.add_field(cfg, "notes", "/tmp/a", aws_access_key_id="a")
     with pytest.raises(click.ClickException, match="requires"):
         config.add_field(cfg, "notes", "/tmp/a", aws_session_token="t")
+
+
+def test_index_location_roundtrip(config_env):
+    cfg = config.load_config()
+    field = config.add_field(cfg, "notes", "/tmp/notes", index_location="cache")
+    cfg = config.with_field(cfg, field)
+    config.save_config(cfg)
+
+    reloaded = config.load_config()
+    assert config.get_field(reloaded, "notes") == field
+    assert field.index_location == "cache"
+
+
+def test_index_location_not_emitted_when_none(config_env):
+    cfg = config.load_config()
+    field = config.add_field(cfg, "notes", "/tmp/notes")
+    config.save_config(config.with_field(cfg, field))
+    text = config_env.read_text(encoding="utf-8")
+    assert "index_location" not in text
+
+
+def test_legacy_config_without_index_location_loads_none(config_env):
+    config_env.write_text(
+        '[memoryfields.notes]\ntransport = "local"\nlocation = "/tmp/notes"\n',
+        encoding="utf-8",
+    )
+    cfg = config.load_config()
+    field = config.get_field(cfg, "notes")
+    assert field.index_location is None
+
+
+def test_s3_in_field_index_rejected(config_env):
+    cfg = config.load_config()
+    with pytest.raises(click.ClickException, match="in-field"):
+        config.add_field(
+            cfg, "cadentia", "s3://bucket/prefix", transport="s3", index_location="in-field"
+        )

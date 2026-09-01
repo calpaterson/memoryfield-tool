@@ -12,6 +12,7 @@ dependencies = [
     "flask~=3.1",
     "markdown~=3.7",
     "ollama~=0.6",
+    "platformdirs~=4.11",
     "pysqlite3-binary~=0.5",
     "pyyaml~=6.0.3",
     "sqlite-vec~=0.1.9",

@@ -1,11 +1,9 @@
-import os
 import subprocess
 import sys
-from pathlib import Path
 
 from . import config, fields, pages
 
-_LOG_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "memoryfield-tool"
+_LOG_DIR = fields.cache_root()
 LOG_PATH = _LOG_DIR / "reindex.log"
 
 

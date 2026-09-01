@@ -34,7 +34,9 @@ works without it (search falls back to substring matching).
 
 ```
 create NAME [--location PATH]     Create a new memoryfield (intro index page)
+      [--index-location CACHE|in-field|PATH]
 connect NAME LOCATION             Connect an existing directory (or s3:// URI)
+      [--index-location CACHE|in-field|PATH]
                                   as a memoryfield
 disconnect NAME                Remove a memoryfield from the config (data is
                                   left in place)
@@ -115,9 +117,9 @@ memoryfield-tool create cadentia --location s3://cadentia-bucket/cadentia \
   Configured keys take precedence over the boto3 default credential chain (env
   vars, `~/.aws/`, IAM roles); keys left unset fall back to that chain.
   `aws_access_key_id` and `aws_secret_access_key` must be set together (the
-  session token is optional).  Note that `~/.config/memoryfield-tool.toml` is
+  session token is optional).  Note that the config file is
   plaintext — when keys are stored there, run
-  `chmod 600 ~/.config/memoryfield-tool.toml` and prefer the env/chain approach
+  `chmod 600 ~/.config/memoryfield-tool/config.toml` and prefer the env/chain approach
   in shared or CI environments.
 - **GCS** exposes an S3-compatible API at
   `https://storage.googleapis.com`; create HMAC keys in the GCS console and set
@@ -184,8 +186,11 @@ Notes:
 
 ## Configuration
 
-The config file lives at `~/.config/memoryfield-tool.toml` (override with
-`MEMORYFIELD_TOOL_CONFIG`).  It maps memoryfield names to locations:
+The config file lives at `~/.config/memoryfield-tool/config.toml` on Linux
+(`platformdirs` user config dir; override with `MEMORYFIELD_TOOL_CONFIG`).  On
+first load after an upgrade, a legacy config at `~/.config/memoryfield-tool.toml`
+is copied to the new path (never when `MEMORYFIELD_TOOL_CONFIG` is set).  It
+maps memoryfield names to locations:
 
 ```toml
 [memoryfields.notes]
@@ -197,26 +202,36 @@ transport = "s3"
 location = "s3://cadentia-bucket/cadentia"
 endpoint_url = "https://storage.googleapis.com"
 region = "auto"
+index_location = "cache"
 ```
 
-`create` and `connect` add entries; `endpoint_url` and `region` are emitted only
-when set (legacy configs stay byte-compatible).
+`create` and `connect` add entries; `endpoint_url`, `region`, and
+`index_location` are emitted only when set (legacy configs stay
+byte-compatible).
 
 ## Vector index
 
-Local fields index to `<field>/nomic-embed-text-v1.5.sqlite3` inside the field;
-s3 fields index to `~/.cache/memoryfield-tool/indexes/<field>.sqlite3` on the
-local machine.  Both use the spec's `pages` schema.  Indexes are derived data
-and can be regenerated with `index` at any time — the cache-dir index is
-machine-local, so it is not shared across machines (run `index` on each one) and
-is not included in exports.  `search` returns every page whose cosine distance is
-at most `--max-distance` (default 0.45); cosine distance is shown in the output.
-It exits with status 1 and a stderr message when no pages match.  When nothing
-meets the cut-off, no results are returned (the substring fallback only applies
-when the index or embedder is unavailable, and is capped at 20 results).  After
-each `write`,
-the index is rebuilt in the background (a detached process; its stderr goes to
-`~/.cache/memoryfield-tool/reindex.log`).
+`--index-location {cache|in-field|PATH}` on `create` and `connect` chooses where
+a field's vector index lives, persisted in the config as `index_location`.
+Resolution (all names are `<base>/<field>/nomic-embed-text-v1.5.sqlite3`):
+
+- absent (default): local fields index in-field at
+  `<field>/nomic-embed-text-v1.5.sqlite3`; s3 fields index to the cache dir.
+- `cache`: `~/.cache/memoryfield-tool/indexes/<field>/nomic-embed-text-v1.5.sqlite3`
+  (machine-local).
+- `PATH`: a directory; the index lands at `<PATH>/<field>/nomic-embed-text-v1.5.sqlite3`.
+- `in-field`: the field directory itself (local fields only).
+
+Existing s3 fields switch to the model-coded cache path on upgrade and re-embed
+once on their next `index` run (after which rebuilds are incremental).  Outside
+indexes are derived data, machine-local, never included in exports, and can be
+regenerated with `index` at any time.  `search` returns every page whose cosine
+distance is at most `--max-distance` (default 0.45); cosine distance is shown in
+the output.  It exits with status 1 and a stderr message when no pages match.
+When nothing meets the cut-off, no results are returned (the substring fallback
+only applies when the index or embedder is unavailable, and is capped at 20
+results).  After each `write`, the index is rebuilt in the background (a
+detached process; its stderr goes to `~/.cache/memoryfield-tool/reindex.log`).
 
 ## Releasing
 
