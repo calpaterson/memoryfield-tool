@@ -12,6 +12,9 @@ from .transport import Transport, TransportError
 
 RESULT_LIMIT = 20
 
+# this is a good threshold for nomic-embed-text-v1
+DEFAULT_MAX_DISTANCE: float = 0.45
+
 
 @dataclass(frozen=True)
 class SearchResult:
@@ -40,7 +43,7 @@ def _summary_from_json(fm_json: str) -> str:
     return str(summary) if summary is not None else ""
 
 
-def _vector_search(index_loc: Path, query: str) -> list[SearchResult] | None:
+def _vector_search(index_loc: Path, query: str, max_distance: float) -> list[SearchResult] | None:
     if not index_loc.is_file():
         return None
     result = embed.embed_texts([f"search_query: {query}"])
@@ -51,9 +54,12 @@ def _vector_search(index_loc: Path, query: str) -> list[SearchResult] | None:
 
     with contextlib.closing(_open_index(index_loc)) as db:
         cur = db.execute(
-            "SELECT filename, vec_distance_cosine(embedding, ?) AS distance "
-            f"FROM pages ORDER BY distance LIMIT {RESULT_LIMIT}",
-            (qblob,),
+            """
+            SELECT filename, vec_distance_cosine(embedding, ?) AS distance
+            FROM pages
+            WHERE vec_distance_cosine(embedding, ?) <= ?
+            ORDER BY distance""",
+            (qblob, qblob, max_distance),
         )
         rows = cur.fetchall()
 
@@ -109,15 +115,22 @@ def _substring_search(t: Transport, query: str) -> list[SearchResult]:
     return results[:RESULT_LIMIT]
 
 
-def search_field(t: Transport, index_loc: Path, query: str) -> list[SearchResult]:
-    vector = _vector_search(index_loc, query)
-    if vector:
+def search_field(
+    t: Transport,
+    index_loc: Path,
+    query: str,
+    max_distance: float = DEFAULT_MAX_DISTANCE,
+) -> list[SearchResult]:
+    vector = _vector_search(index_loc, query, max_distance)
+    if vector is not None:
         return vector
     return _substring_search(t, query)
 
 
 def search_all(
-    field_list: list[config.Field], query: str
+    field_list: list[config.Field],
+    query: str,
+    max_distance: float = DEFAULT_MAX_DISTANCE,
 ) -> tuple[list[tuple[str, SearchResult]], list[tuple[str, str]]]:
     """Search all fields, skipping unreachable ones.
 
@@ -130,7 +143,7 @@ def search_all(
         try:
             t = fields.get_transport(field)
             loc = fields.index_location(field)
-            for result in search_field(t, loc, query):
+            for result in search_field(t, loc, query, max_distance):
                 results.append((field.name, result))
         except (TransportError, click.ClickException) as e:
             errors.append((field.name, str(e)))

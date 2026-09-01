@@ -826,6 +826,9 @@ def test_schema_output(cli_runner):
     catalog = next(c for c in data["commands"] if c["name"] == "catalog")
     sort_by = next(p for p in catalog["params"] if p["name"] == "sort_by")
     assert set(sort_by["choices"]) == {"path", "title", "created", "updated"}
+    search_entry = next(c for c in data["commands"] if c["name"] == "search")
+    max_distance = next(p for p in search_entry["params"] if p["name"] == "max_distance")
+    assert max_distance["default"] == 0.45
 
 
 def test_schema_meta_covers_every_command():
@@ -924,6 +927,44 @@ def test_search_json(cli_runner, connected):
     data = json.loads(result.output)
     assert isinstance(data, list)
     assert any(r["filename"] == "gamma.md" and r["field"] == "notes" for r in data)
+
+
+def test_search_max_distance_excludes_all(cli_runner, connected, fake_embed):
+    _cfg_path, _field_path = connected
+    cli_runner.invoke(cli.cli, ["index", "--field", "notes"])
+    result = cli_runner.invoke(
+        cli.cli, ["search", "--field", "notes", "--max-distance", "0.01", "beta"]
+    )
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "No matching results found." in result.stderr
+
+
+def test_search_max_distance_returns_all(cli_runner, connected, fake_embed):
+    _cfg_path, _field_path = connected
+    cli_runner.invoke(cli.cli, ["index", "--field", "notes"])
+    result = cli_runner.invoke(
+        cli.cli, ["search", "--field", "notes", "--max-distance", "1.0", "beta"]
+    )
+    assert result.exit_code == 0
+    for name in ("index.md", "alpha.md", "beta.md", "gamma.md"):
+        assert name in result.output
+
+
+def test_search_no_results_exit_code(cli_runner, connected):
+    _cfg_path, _field_path = connected
+    result = cli_runner.invoke(cli.cli, ["search", "--field", "notes", "zzzz-not-there"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "No matching results found." in result.stderr
+
+
+def test_search_json_no_results_exit_code(cli_runner, connected):
+    _cfg_path, _field_path = connected
+    result = cli_runner.invoke(cli.cli, ["search", "--json", "--field", "notes", "zzzz-not-there"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == []
+    assert "No matching results found." in result.stderr
 
 
 def test_search_multi_field_prefix(cli_runner, config_env, field_dir, tmp_path):

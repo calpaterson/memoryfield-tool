@@ -962,7 +962,14 @@ def _format_result(result: search.SearchResult) -> str:
 @click.argument("query")
 @click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON array")
-def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
+@click.option(
+    "--max-distance",
+    type=click.FloatRange(min=0.0, max=2.0),
+    default=search.DEFAULT_MAX_DISTANCE,
+    show_default=True,
+    help="Maximum cosine distance for semantic results",
+)
+def search_cmd(query: str, field_name: str | None, as_json: bool, max_distance: float) -> None:
     """Search pages across connected memoryfields.
 
     Examples:
@@ -970,13 +977,21 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
     \b
         memoryfield-tool search 'carbon fibre'
         memoryfield-tool search --json 'carbon fibre'
+        memoryfield-tool search --max-distance 0.3 'carbon fibre'
+
+    Exits with status 1 when no pages match.
     """
     cfg = config.load_config()
     field_list = fields.connected_fields(cfg, field_name)
 
-    results, errors = search.search_all(field_list, query)
+    results, errors = search.search_all(field_list, query, max_distance)
     for name, msg in errors:
         click.echo(f"error: memoryfield {name}: {msg}", err=True)
+    if not results:
+        click.echo("No matching results found.", err=True)
+        if as_json:
+            click.echo("[]")
+        sys.exit(1)
     if as_json:
         payload = [
             {
@@ -990,9 +1005,6 @@ def search_cmd(query: str, field_name: str | None, as_json: bool) -> None:
         click.echo(json.dumps(payload, indent=2, default=str))
         return
 
-    if not results:
-        click.echo("No matching results found.")
-        return
     if len(field_list) == 1:
         for _fname, r in results:
             click.echo(_format_result(r))

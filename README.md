@@ -27,7 +27,7 @@ uv run memoryfield-tool --help
 ```
 
 Requires Python 3.12+.  Semantic search needs a local
-[ollama](https://ollama.dev) with `nomic-embed-text` pulled; everything else
+[ollama](https://ollama.com) with `nomic-embed-text` pulled; everything else
 works without it (search falls back to substring matching).
 
 ## Commands
@@ -196,8 +196,12 @@ s3 fields index to `~/.cache/memoryfield-tool/indexes/<field>.sqlite3` on the
 local machine.  Both use the spec's `pages` schema.  Indexes are derived data
 and can be regenerated with `index` at any time — the cache-dir index is
 machine-local, so it is not shared across machines (run `index` on each one) and
-is not included in exports.  `search` returns the top 20 nearest pages (cosine
-distance shown in the output; no hard distance cutoff).  After each `write`,
+is not included in exports.  `search` returns every page whose cosine distance is
+at most `--max-distance` (default 0.45); cosine distance is shown in the output.
+It exits with status 1 and a stderr message when no pages match.  When nothing
+meets the cut-off, no results are returned (the substring fallback only applies
+when the index or embedder is unavailable, and is capped at 20 results).  After
+each `write`,
 the index is rebuilt in the background (a detached process; its stderr goes to
 `~/.cache/memoryfield-tool/reindex.log`).
 
