@@ -54,12 +54,13 @@ new TITLE [--field NAME] [--name PAGE]   Create a page (generated frontmatter,
                                   slugified filename)
 index [--field NAME]              Build or update the vector index
 search [--field NAME] QUERY       Semantic search (substring fallback)
+pull [--field NAME] QUERY         Search and print full content of every match
 export [--field NAME]             Write the field as a .memoryfield.zip
 serve [--port N] [--host H]       Serve all fields over HTTP (spec data
       [--allow-writes] [--open]     server + HTML renderer)
 ```
 
-Commands that act on multiple fields (search, catalog, validate, index,
+Commands that act on multiple fields (search, pull, catalog, validate, index,
 export) skip unreachable fields with an `error: memoryfield <name>` warning on
 stderr instead of aborting; use `disconnect` to drop a stale field.
 
@@ -78,6 +79,18 @@ derives the page filename from the title (`--name` overrides) and prints the
 created page + uuid.  `memoryfield-tool --schema` prints the full command
 reference (commands, flags, defaults, choices) as JSON for agents to
 introspect at runtime.
+
+### Pull
+
+`pull QUERY` searches (semantic, substring fallback) and prints the full
+content of every matching page in one call — no separate `read`. Pages
+print in rank order separated by a blank line, each with a `filename`
+frontmatter key identifying it (`<field>/<page>` when more than one
+field is searched, bare `<page>` otherwise). Pages without frontmatter
+gain a minimal block; pages with malformed frontmatter get a
+`### FILE:` header instead. Unreachable fields warn on stderr; a
+matched page that cannot be read (e.g. a stale index) is reported and
+the command exits 1.  `pull` is read-only and never writes or reindexes.
 
 ## S3-compatible stores
 

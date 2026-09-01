@@ -67,6 +67,7 @@ _COMMAND_META: dict[str, dict[str, object]] = {
             }
         },
     },
+    "pull": {"safety": "read-only"},
     "validate": {"safety": "mutating"},
     "export": {"safety": "mutating"},
     "serve": {"safety": "mutating", "destructive_flags": ["--allow-writes"]},
@@ -498,6 +499,22 @@ def _read_file(
         else:
             output.append(line)
     return output
+
+
+def _with_filename(text: str, name: str) -> str:
+    """Return page text with a `filename` frontmatter key injected.
+
+    Well-formed frontmatter gains the key (appended last); pages with no
+    frontmatter gain a minimal block; malformed/unclosed frontmatter
+    falls back to a `### FILE:` header line. Output-only: pull never
+    writes pages back.
+    """
+    fm, has = frontmatter.parse_frontmatter(text)
+    if fm is not None:
+        return frontmatter.set_frontmatter_field(text, "filename", name)
+    if not has:
+        return frontmatter.build_frontmatter({"filename": name}) + text
+    return f"### FILE: {name}\n" + text
 
 
 @cli.command(name="read")
@@ -1012,6 +1029,66 @@ def search_cmd(query: str, field_name: str | None, as_json: bool, max_distance: 
         for fname, r in results:
             line = f"{fname}/{_format_result(r)}"
             click.echo(line)
+
+
+@cli.command(name="pull")
+@click.argument("query")
+@click.option("--field", "field_name", default=None, help="Limit to a single memoryfield")
+def pull_cmd(query: str, field_name: str | None) -> None:
+    """Search and print the full content of every matching page.
+
+    Like `search` followed by `read` of each hit, in one call. Pages are
+    printed in search-rank order, separated by a blank line, each with a
+    `filename` frontmatter key identifying the page (prefixed `<field>/` when
+    more than one field is searched). Field-level errors warn on stderr and the
+    remaining fields still print; a matched page that cannot be read (e.g. a
+    stale index) is reported on stderr and the command exits 1.
+
+    Examples:
+
+    \b
+        memoryfield-tool pull 'carbon fibre'
+        memoryfield-tool pull --field notes 'carbon fibre'
+    """
+    cfg = config.load_config()
+    field_list = fields.connected_fields(cfg, field_name)
+
+    results, errors = search.search_all(field_list, query)
+    for name, msg in errors:
+        click.echo(f"error: memoryfield {name}: {msg}", err=True)
+    if not results:
+        click.echo("No matching results found.")
+        return
+
+    field_by_name = {f.name: f for f in field_list}
+    transports: dict[str, transport.Transport] = {}
+    multi = len(field_list) > 1
+    failed = False
+    for i, (fname, result) in enumerate(results):
+        t = transports.get(fname)
+        if t is None:
+            t = fields.get_transport(field_by_name[fname])
+            transports[fname] = t
+        try:
+            text = t.read_object(result.filename).decode("utf-8")
+        except transport.ObjectNotFound:
+            click.echo(f"error: {fname}/{result.filename}: file not found", err=True)
+            failed = True
+            continue
+        except UnicodeDecodeError:
+            click.echo(f"error: {fname}/{result.filename}: cannot read binary file", err=True)
+            failed = True
+            continue
+        display = f"{fname}/{result.filename}" if multi else result.filename
+        page_text = _with_filename(text, display)
+        if not page_text.endswith("\n"):
+            page_text += "\n"
+        if i:
+            click.echo()
+        click.echo(page_text, nl=False)
+
+    if failed:
+        sys.exit(1)
 
 
 @cli.command(name="validate")

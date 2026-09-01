@@ -809,6 +809,7 @@ def test_schema_output(cli_runner):
         "rename",
         "read",
         "search",
+        "pull",
         "catalog",
         "validate",
         "index",
@@ -989,6 +990,140 @@ def test_search_multi_field_prefix(cli_runner, config_env, field_dir, tmp_path):
     result = cli_runner.invoke(cli.cli, ["search", "work"])
     assert result.exit_code == 0
     assert "work/work.md" in result.output
+
+
+def test_with_filename_appends_key():
+    out = cli._with_filename("---\ntitle: T\n---\n\nbody\n", "x.md")
+    assert out.startswith("---\ntitle: T\n")
+    assert "filename: x.md" in out
+    assert out.endswith("\n\nbody\n")
+
+
+def test_with_filename_no_frontmatter():
+    out = cli._with_filename("# Just a heading\n", "x.md")
+    assert out.startswith("---\nfilename: x.md\n---\n")
+    assert "# Just a heading" in out
+
+
+def test_with_filename_empty_block():
+    out = cli._with_filename("---\n\n---\n\nbody\n", "x.md")
+    assert "filename: x.md" in out
+    assert "body" in out
+
+
+def test_with_filename_malformed_falls_back():
+    out = cli._with_filename("---\ntitle: T\n", "x.md")
+    assert out.startswith("### FILE: x.md\n")
+    assert "title: T" in out
+
+
+def test_pull_returns_matching_pages(cli_runner, connected):
+    _cfg_path, _field_path = connected
+    result = cli_runner.invoke(cli.cli, ["pull", "beta"])
+    assert result.exit_code == 0
+    assert "filename: beta.md" in result.output
+    assert "title: Beta Notes" in result.output
+    assert "Beta is the second letter." in result.output
+
+
+def test_pull_vector_search(cli_runner, connected, fake_embed):
+    _cfg_path, _field_path = connected
+    cli_runner.invoke(cli.cli, ["index", "--field", "notes"])
+    result = cli_runner.invoke(cli.cli, ["pull", "--field", "notes", "beta"])
+    assert result.exit_code == 0
+    assert "filename: beta.md" in result.output
+    assert "Beta is the second letter." in result.output
+
+
+def _controlled_embed(texts):
+    out = []
+    for t in texts:
+        if t.startswith("search_document:") and "Alpha" in t:
+            out.append([1.0] + [0.0] * 767)
+        elif t.startswith("search_document:"):
+            out.append([0.9, 0.43589] + [0.0] * 766)
+        else:
+            out.append([1.0] + [0.0] * 767)
+    return out
+
+
+def test_pull_ranked_order(cli_runner, connected, monkeypatch):
+    _cfg_path, field_path = connected
+    monkeypatch.setattr("memoryfield_tool.embed.embed_texts", _controlled_embed)
+    index.build_index(transport.local(field_path), index.index_path(field_path), progress=False)
+    result = cli_runner.invoke(cli.cli, ["pull", "some query"])
+    assert result.exit_code == 0
+    assert result.output.index("filename: alpha.md") < result.output.index("filename: beta.md")
+
+
+def test_pull_no_frontmatter_page_gets_block(cli_runner, connected):
+    _cfg_path, field_path = connected
+    (field_path / "plain.md").write_text("# Just a heading\n", encoding="utf-8")
+    result = cli_runner.invoke(cli.cli, ["pull", "plain"])
+    assert result.exit_code == 0
+    assert result.output.startswith("---\n")
+    assert "filename: plain.md" in result.output
+    assert "# Just a heading" in result.output
+
+
+def test_pull_malformed_frontmatter_header(cli_runner, connected):
+    _cfg_path, field_path = connected
+    (field_path / "broken.md").write_text("---\ntitle: Broken\n", encoding="utf-8")
+    result = cli_runner.invoke(cli.cli, ["pull", "broken"])
+    assert result.exit_code == 0
+    assert "### FILE: broken.md" in result.output
+
+
+def test_pull_multi_field_prefixed_filename(cli_runner, config_env, field_dir, tmp_path):
+    field2 = tmp_path / "field2"
+    field2.mkdir()
+    (field2 / "work.md").write_text(
+        "---\ntitle: Work\nsummary: Work notes\n---\n\nwork\n", encoding="utf-8"
+    )
+    config_env.write_text(
+        f"[memoryfields.notes]\n"
+        f'transport = "local"\n'
+        f'location = "{field_dir}"\n'
+        f'created = "2026-01-01T00:00:00Z"\n'
+        f'last_used = "2026-01-01T00:00:00Z"\n'
+        f"[memoryfields.work]\n"
+        f'transport = "local"\n'
+        f'location = "{field2}"\n'
+        f'created = "2026-01-01T00:00:00Z"\n'
+        f'last_used = "2026-01-01T00:00:00Z"\n',
+        encoding="utf-8",
+    )
+    result = cli_runner.invoke(cli.cli, ["pull", "work"])
+    assert result.exit_code == 0
+    assert "filename: work/work.md" in result.output
+    result = cli_runner.invoke(cli.cli, ["pull", "--field", "notes", "gamma"])
+    assert result.exit_code == 0
+    assert "filename: gamma.md" in result.output
+
+
+def test_pull_no_results(cli_runner, connected):
+    result = cli_runner.invoke(cli.cli, ["pull", "zzznomatch"])
+    assert result.exit_code == 0
+    assert "No matching results found." in result.output
+
+
+def test_pull_skips_dead_field(cli_runner, config_env, field_dir, tmp_path):
+    _dead_field_config(config_env, field_dir, tmp_path)
+    result = cli_runner.invoke(cli.cli, ["pull", "gamma"])
+    assert result.exit_code == 0
+    assert "error: memoryfield dead:" in result.output
+    assert "filename: notes/gamma.md" in result.output
+    assert "Gamma is the third letter." in result.output
+
+
+def test_pull_stale_index_missing_file(cli_runner, connected, fake_embed):
+    _cfg_path, field_path = connected
+    cli_runner.invoke(cli.cli, ["index", "--field", "notes"])
+    (field_path / "alpha.md").unlink()
+    result = cli_runner.invoke(cli.cli, ["pull", "anything"])
+    assert result.exit_code == 1
+    assert "error: notes/alpha.md: file not found" in result.output
+    assert "filename: beta.md" in result.output
 
 
 def test_validate_clean_exit_0(cli_runner, connected):
