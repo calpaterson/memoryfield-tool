@@ -30,6 +30,26 @@ Requires Python 3.12+.  Semantic search needs a local
 [ollama](https://ollama.dev) with `nomic-embed-text` pulled; everything else
 works without it (search falls back to substring matching).
 
+### Alternative embedding models
+
+nomic-embed-text-v1.5 is the default embedding model, but the spec allows any
+embedding model.  Another model available in your local ollama can be selected
+with the `MEMORYFIELD_EMBED_MODEL` environment variable:
+
+```sh
+ollama pull bge-m3
+MEMORYFIELD_EMBED_MODEL=bge-m3 memoryfield-tool index --field myfield
+MEMORYFIELD_EMBED_MODEL=bge-m3 memoryfield-tool search --field myfield "query"
+```
+
+The model code (which names the vector index file, per the spec) defaults to
+the ollama model name and can be set explicitly with
+`MEMORYFIELD_EMBED_MODEL_CODE` — useful when the ollama shorthand omits a
+version you want pinned, eg:
+`MEMORYFIELD_EMBED_MODEL_CODE=bge-m3-1.0`.  Note that pages are embedded
+differently by different models: after switching models, rebuild each field's
+index with `memoryfield-tool index --field NAME`.
+
 ## Commands
 
 ```
