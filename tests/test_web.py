@@ -19,7 +19,7 @@ def _get(client, url):
     return client.get(url)
 
 
-def test_landing_lists_field(app, connected):
+def test_landing_search_home_lists_fields(app, connected):
     _cfg_path, _field_path = connected
     resp = _get(app.test_client(), "/")
     assert resp.status_code == 200
@@ -27,6 +27,8 @@ def test_landing_lists_field(app, connected):
     assert "/notes/" in html
     assert "notes" in html
     assert "4 pages" in html
+    assert 'name="q"' in html
+    assert '<form action="/" method="get"' in html
 
 
 def test_unknown_field_404(app):
@@ -202,6 +204,116 @@ def test_global_search_skips_dead_field(config_env, field_dir, tmp_path):
     resp = client.get("/search?q=gamma")
     assert resp.status_code == 200
     assert any(r["filename"] == "gamma.md" for r in resp.get_json()["results"])
+
+
+def test_serp_renders_vector_results(app, connected, fake_embed):
+    _cfg_path, field_path = connected
+    from memoryfield_tool import index
+
+    index.build_index(transport.local(field_path), index.index_path(field_path), progress=False)
+    resp = _get(app.test_client(), "/?q=beta")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'href="/notes/beta"' in html
+    assert "Beta Notes" in html
+    assert "(distance" in html
+
+
+def test_serp_substring_fallback(app, connected):
+    resp = _get(app.test_client(), "/?q=beta")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'href="/notes/beta"' in html
+    assert "(distance" not in html
+
+
+def test_serp_no_results(app, connected):
+    resp = _get(app.test_client(), "/?q=zzzz-not-there")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "No matching results found." in html
+
+
+def test_serp_missing_q_renders_home(app, connected):
+    resp = _get(app.test_client(), "/?q=")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert 'name="q"' in html
+    assert "No matching results found." not in html
+
+
+def test_serp_escapes_html(app, connected):
+    _cfg_path, field_path = connected
+    (field_path / "evil.md").write_text(
+        "---\ntitle: 'Evil <b>Script</b>'\nsummary: '<script>alert(1)</script>'\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    resp = _get(app.test_client(), "/?q=script")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+    assert "Evil &lt;b&gt;Script&lt;/b&gt;" in html
+
+
+def test_catalog_lists_pages(app, connected):
+    resp = _get(app.test_client(), "/catalog")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "<h1>All pages</h1>" in html
+    assert 'href="/notes/alpha"' in html
+    assert 'href="/notes/index"' in html
+    assert "Notes about beta things." in html
+
+
+def test_catalog_multi_field(connected, tmp_path):
+    _cfg_path, _field_dir = connected
+    field2 = tmp_path / "field2"
+    field2.mkdir()
+    (field2 / "work.md").write_text("---\ntitle: Work\n---\n\nwork\n", encoding="utf-8")
+    config.save_config(
+        config.with_field(
+            config.load_config(), config.Field(name="work", transport="local", location=str(field2))
+        )
+    )
+    app2 = web.create_app(config.load_config())
+    html = _get(app2.test_client(), "/catalog").get_data(as_text=True)
+    assert 'href="/notes/alpha"' in html
+    assert 'href="/work/work"' in html
+
+
+def test_catalog_skips_dead_field(config_env, field_dir, tmp_path):
+    config_env.write_text(
+        f'[memoryfields.notes]\ntransport = "local"\nlocation = "{field_dir}"\n'
+        f'[memoryfields.dead]\ntransport = "local"\nlocation = "{tmp_path / "gone"}"\n',
+        encoding="utf-8",
+    )
+    client = web.create_app(config.load_config()).test_client()
+    resp = client.get("/catalog")
+    assert resp.status_code == 200
+    assert 'href="/notes/gamma"' in resp.get_data(as_text=True)
+
+
+def test_catalog_link_in_nav(app, connected):
+    resp = _get(app.test_client(), "/notes/alpha")
+    assert resp.status_code == 200
+    assert 'href="/catalog"' in resp.get_data(as_text=True)
+
+
+def test_field_catalog_lists_pages(app, connected):
+    resp = _get(app.test_client(), "/notes/catalog")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "<h1>Catalog: /notes</h1>" in html
+    assert 'href="/notes/alpha"' in html
+    assert 'href="/notes/index"' in html
+    assert "Notes about beta things." in html
+    assert "<th>Field</th>" not in html
+
+
+def test_field_catalog_all_pages_link(app, connected):
+    html = _get(app.test_client(), "/catalog").get_data(as_text=True)
+    assert 'href="/notes/catalog"' in html
 
 
 @mock_aws

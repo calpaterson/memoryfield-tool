@@ -1,18 +1,29 @@
 import io
 import json
 import re
+import time
 from pathlib import Path
 
-from flask import Flask, Response, abort, render_template_string, request, send_from_directory
+from flask import Flask, Response, abort, render_template, request, send_from_directory
 from markdown import markdown
 
-from . import assets, catalog, config, export, fields, frontmatter, index, pages, search
+from . import (
+    assets,
+    catalog,
+    config,
+    export,
+    fields,
+    frontmatter,
+    index,
+    pages,
+    search,
+    transport,
+)
 
 MD_LINK_RE = re.compile(r'href="([^"]+?)\.md(#?)"')
-_TEMPLATE_FILE = Path(__file__).parent / "templates" / "base.html"
-TEMPLATE = _TEMPLATE_FILE.read_text("utf-8")
 
 _WRITES_DISABLED = "writes disabled (serve with --allow-writes)"
+_CATALOG_TTL_SECONDS = 30.0
 
 
 def _json_dumps(payload: object) -> str:
@@ -24,6 +35,54 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
     nav_fields = [f.name for f in field_list]
     transports = {f.name: fields.get_transport(f) for f in field_list}
     index_locs = {f.name: fields.index_location(f) for f in field_list}
+    catalog_cache: dict[str, tuple[float, list[dict[str, object]]]] = {}
+
+    def _search_all_sorted(q: str) -> list[tuple[str, search.SearchResult]]:
+        results, _errors = search.search_all(field_list, q)
+        results.sort(key=lambda t: t[1].distance if t[1].distance is not None else float("inf"))
+        return results
+
+    def _result_title(r: search.SearchResult) -> str:
+        fm_title = ""
+        if isinstance(r.frontmatter, dict):
+            fm_title = str(r.frontmatter.get("title") or "")
+        return fm_title or r.filename
+
+    def _catalog_rows(field: config.Field) -> list[dict[str, object]]:
+        cached = catalog_cache.get(field.name)
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < _CATALOG_TTL_SECONDS:
+            return cached[1]
+        try:
+            rows = catalog.catalog_field(transports[field.name], field_name=field.name)
+        except transport.TransportError:
+            rows = []
+        catalog_cache[field.name] = (now, rows)
+        return rows
+
+    def _catalog_view(
+        rows: list[dict[str, object]], *, heading: str, title: str, show_field: bool
+    ) -> str:
+        view = [
+            {
+                "field": r["field"],
+                "page": str(r["filename"]).removesuffix(".md"),
+                "title": str(r["title"] or "") or str(r["filename"]),
+                "summary": r["summary"],
+            }
+            for r in rows
+        ]
+        return render_template(
+            "catalog.html",
+            rows=view,
+            heading=heading,
+            show_field=show_field,
+            field=None,
+            title=title,
+            fm=None,
+            pico_css=assets.pico_css_href(),
+            nav_fields=nav_fields,
+        )
 
     def _field_or_404(name: str) -> config.Field:
         field = cfg.fields.get(name)
@@ -44,8 +103,8 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         html = markdown(frontmatter.page_body(text), extensions=["fenced_code", "tables"])
         html = MD_LINK_RE.sub(rf'href="/{field.name}/\1\2"', html)
         title = (fm or {}).get("title", Path(filename).stem)
-        return render_template_string(
-            TEMPLATE,
+        return render_template(
+            "base.html",
             field=field.name,
             title=title,
             fm=fm,
@@ -55,12 +114,11 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         )
 
     def render_catalog(field: config.Field) -> str:
-        t = transports[field.name]
-        rows = catalog.catalog_field(t, field_name=field.name)
+        rows = _catalog_rows(field)
         md = catalog.catalog_markdown(rows, show_field=False)
         html = markdown(md, extensions=["fenced_code", "tables"])
-        return render_template_string(
-            TEMPLATE,
+        return render_template(
+            "base.html",
             field=field.name,
             title=f"Index of /{field.name}",
             fm=None,
@@ -80,20 +138,59 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
 
     @app.route("/")
     def landing() -> str:
-        items = []
-        for f in field_list:
-            t = transports[f.name]
-            count = len(pages.collect_pages(t))
-            items.append(f'<li><a href="/{f.name}/">{f.name}</a> — {count} pages</li>')
-        content = "<h1>Memoryfields</h1><ul>" + "".join(items) + "</ul>"
-        return render_template_string(
-            TEMPLATE,
+        q = request.args.get("q") or ""
+        if not q:
+            field_view = [
+                {"name": f.name, "count": len(pages.collect_pages(transports[f.name]))}
+                for f in field_list
+            ]
+            return render_template(
+                "search.html",
+                q="",
+                results=None,
+                fields=field_view,
+                field=None,
+                title="Memoryfields",
+                fm=None,
+                pico_css=assets.pico_css_href(),
+                nav_fields=nav_fields,
+            )
+        results = [
+            {
+                "field": fname,
+                "page": r.filename.removesuffix(".md"),
+                "title": _result_title(r),
+                "summary": r.summary,
+                "distance": r.distance,
+            }
+            for fname, r in _search_all_sorted(q)
+        ]
+        return render_template(
+            "search.html",
+            q=q,
+            results=results,
+            fields=[],
             field=None,
-            title="Memoryfields",
+            title=f"Search: {q}",
             fm=None,
-            content=content,
             pico_css=assets.pico_css_href(),
             nav_fields=nav_fields,
+        )
+
+    @app.route("/catalog")
+    def all_pages() -> str:
+        rows: list[dict[str, object]] = []
+        for f in field_list:
+            rows.extend(_catalog_rows(f))
+        rows = catalog.catalog_sort(rows, "path")
+        return _catalog_view(rows, heading="All pages", title="All pages", show_field=True)
+
+    @app.route("/<field>/catalog")
+    def field_catalog(field: str) -> str:
+        f = _field_or_404(field)
+        rows = catalog.catalog_sort(_catalog_rows(f), "path")
+        return _catalog_view(
+            rows, heading=f"Catalog: /{f.name}", title=f"Index of /{f.name}", show_field=False
         )
 
     @app.route("/<field>/", strict_slashes=False)
@@ -144,12 +241,14 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
             if result.created:
                 resp.headers["Location"] = f"/{f.name}/{filename}"
             index.reindex_page(t, index_locs[f.name], filename)
+            catalog_cache.pop(f.name, None)
             return resp
 
         if not t.exists(filename):
             return Response("page not found", status=404)
         t.delete_object(filename)
         index.delete_page(index_locs[f.name], filename)
+        catalog_cache.pop(f.name, None)
         return Response(status=204)
 
     @app.route("/<field>/<page>")
@@ -192,8 +291,7 @@ def create_app(cfg: config.Config, *, allow_writes: bool = False) -> Flask:
         q = request.args.get("q")
         if not q:
             return Response(status=400)
-        results, _errors = search.search_all(field_list, q)
-        results.sort(key=lambda t: t[1].distance if t[1].distance is not None else float("inf"))
+        results = _search_all_sorted(q)
         payload = [
             {
                 "filename": r.filename,

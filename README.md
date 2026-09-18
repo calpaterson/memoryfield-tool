@@ -149,13 +149,15 @@ renderer.  Field names from the config namespace the routes:
 
 | Route                  | Method | Description                                    |
 |------------------------|--------|------------------------------------------------|
-| `/`                    | GET    | Landing page listing every field               |
+| `/`                    | GET    | Google-style search — without `q`, search home + field list; with `?q=`, HTML SERP (embedding search with substring fallback) |
 | `/{field}/`            | GET    | Rendered `index.md`, or a catalog listing      |
 | `/{field}/{page}`      | GET    | Rendered page HTML                             |
 | `/{field}/{page}.md`   | GET    | Raw page bytes (`text/markdown`)               |
 | `/{field}.memoryfield.zip` | GET | Full field snapshot as a zip                |
 | `/{field}/search?q=`   | GET    | Field-scoped search JSON (`results` array)     |
 | `/search?q=`           | GET    | Global search across all fields (results gain `field`) |
+| `/catalog`             | GET    | All-pages listing (every page, all fields)    |
+| `/{field}/catalog`     | GET    | Field-scoped all-pages listing                 |
 | `/{field}/{page}.md`   | PUT    | Create (201) or replace (204) a page           |
 | `/{field}/{page}.md`   | DELETE | Remove a page and its index entries (204)      |
 
@@ -175,9 +177,11 @@ Notes:
 - s3 pages are read live with no caching in v1 (ETag/Last-Modified caching is
   future work).  Buckets are probed at startup, so an unreachable bucket refuses
   to start `serve` rather than 500ing per request.
-- A page literally named `search` is shadowed for HTML rendering (the search
-  route wins); it is still available raw at `/{field}/search.md`.  Field names
-  `search` and `static` are likewise reserved.
+- Pages literally named `search` or `catalog` are shadowed for HTML rendering
+  (the route wins); they are still available raw at `/{field}/search.md` and
+  `/{field}/catalog.md`.  Field names `search`, `static` and `catalog` are
+  likewise reserved (a field named `catalog` is still reachable at `/catalog/`
+  and via its page routes).
 - The renderer bundles pico.css at build time (sha256-pinned, never checked
   into git); in a source checkout it falls back to the pinned CDN URL.
 - `PUT` reindexes the page synchronously; `DELETE` drops its index rows.  As in

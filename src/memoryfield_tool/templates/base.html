@@ -19,6 +19,10 @@
     main.container {
       max-width: 45rem;
     }
+
+    .search-home { margin: 3rem auto 0; max-width: 34rem; text-align: center; }
+    .search-home input[type="search"] { font-size: 1.15rem; }
+    .serp-result { margin-bottom: 1.5rem; }
   </style>
 </head>
 <body>
@@ -28,6 +32,7 @@
         <li><a href="/"><strong>Memoryfields</strong></a></li>
       </ul>
       <ul>
+        <li><a href="/catalog">All pages</a></li>
         {% for name in nav_fields %}
         <li><a href="/{{ name }}/">{{ name }}</a></li>
         {% endfor %}
@@ -40,7 +45,7 @@
       </hgroup>
       <p><small>Created {{ fm.created }} &middot; Updated {{ fm.updated }}</small></p>
     {% endif %}
-    {{ content|safe }}
+    {% block content %}{{ content|safe }}{% endblock %}
   </main>
 </body>
 </html>
