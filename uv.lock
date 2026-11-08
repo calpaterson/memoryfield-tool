@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -710,7 +710,7 @@ dependencies = [
     { name = "markdown" },
     { name = "ollama" },
     { name = "platformdirs" },
-    { name = "pysqlite3-binary" },
+    { name = "pysqlite3-binary", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pyyaml" },
     { name = "sqlite-vec" },
     { name = "tomli-w" },
@@ -735,7 +735,7 @@ requires-dist = [
     { name = "markdown", specifier = "~=3.7" },
     { name = "ollama", specifier = "~=0.6" },
     { name = "platformdirs", specifier = "~=4.11" },
-    { name = "pysqlite3-binary", specifier = "~=0.5" },
+    { name = "pysqlite3-binary", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "~=0.5" },
     { name = "pyyaml", specifier = "~=6.0.3" },
     { name = "sqlite-vec", specifier = "~=0.1.9" },
     { name = "tomli-w", specifier = "~=1.0" },
